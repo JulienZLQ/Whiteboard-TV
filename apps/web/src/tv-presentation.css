@@ -57,3 +57,8 @@
 @media(prefers-reduced-motion:reduce){.tv-mode .zoom-controls.panel[data-tv-view]::before,.legacy-tv #view-controls[data-tv-view]::before,.tv-mode .zoom-controls.panel[data-tv-view] .view-button,.legacy-tv #view-controls[data-tv-view] button{transition:none}}
 
 .tv-header>.tv-header-item>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tv-header>.tv-header-item>i{flex-shrink:0}
+
+/* A TV action is blue only while the remote focus is on it. */
+.legacy-tv #create,.tv-navigation .welcome-form>.primary{background:#fff;color:#172033;border-color:transparent;box-shadow:0 4px 16px #1720330d;transition:background-color .2s ease,color .2s ease,box-shadow .24s ease}
+.legacy-tv #create:focus,.tv-navigation .welcome-form>.primary:focus{outline:none;background:#315efb;color:#fff;box-shadow:0 5px 18px #315efb30}
+@media(prefers-reduced-motion:reduce){.legacy-tv #create,.tv-navigation .welcome-form>.primary{transition:none}}
