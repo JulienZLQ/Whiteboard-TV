@@ -27,6 +27,7 @@ test('independent editor and TV receive in-progress strokes, erasures and recove
   await page.mouse.up();
   await expect(tvCanvas).toHaveAttribute('data-stroke-count', '1');
   await expect(mobile.getByTestId('canvas')).toHaveAttribute('data-stroke-count', '1');
+  await expect(tvCanvas).toHaveAttribute('data-camera-moving', 'false');
   const camera = await tvCanvas.getAttribute('data-camera');
   await page.getByRole('button', { name: '放大', exact: true }).click();
   expect(await tvCanvas.getAttribute('data-camera')).toBe(camera);
@@ -75,4 +76,56 @@ test('mobile two-finger gesture cancels an uncommitted pen stroke', async ({ bro
   await expect(canvas).not.toHaveAttribute('data-camera', initial!);
   await expect(page.getByText('已保存', { exact: true })).toBeVisible();
   await context.close();
+});
+
+
+test('TV creates a room, phone joins and claims hosting, removed credentials stay revoked', async ({ browser, page }) => {
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto('/?mode=tv');
+  await page.getByRole('button', { name: '创建电视白板' }).click();
+  await expect(page.getByAltText('电视编辑加入二维码')).toBeVisible();
+  await expect(page.getByRole('toolbar')).toHaveCount(0);
+  await page.getByRole('button', { name: '邀请加入', exact: true }).click();
+  const invitation = await page.locator('#invite-link').inputValue();
+  await page.getByRole('button', { name: '关闭邀请' }).click();
+  const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const phone = await phoneContext.newPage(); phone.on('pageerror', e => errors.push(e.message));
+  await phone.goto(invitation); await phone.getByPlaceholder('怎么称呼你？').fill('手机成员');
+  await phone.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(phone.getByRole('toolbar')).toBeVisible();
+  await phone.mouse.move(140, 340); await phone.mouse.down(); await phone.mouse.move(240, 450, { steps: 20 });
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-preview-count', '1');
+  await phone.mouse.up(); await expect(page.getByTestId('canvas')).toHaveAttribute('data-stroke-count', '1');
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-camera-moving', 'false');
+  // Interior strokes retain the TV overview rather than fitting every new stroke.
+  const camera = await page.getByTestId('canvas').getAttribute('data-camera');
+  await phone.mouse.move(150, 380); await phone.mouse.down(); await phone.mouse.move(200, 410, { steps: 10 }); await phone.mouse.up();
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-stroke-count', '2');
+  expect(await page.getByTestId('canvas').getAttribute('data-camera')).toBe(camera);
+  await page.getByLabel('电视关注成员').selectOption({ label: '关注 手机成员' });
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-camera-moving', 'false');
+  await expect.poll(async () => JSON.parse((await page.getByTestId('canvas').getAttribute('data-camera'))!).zoom).toBe(1);
+  await page.getByLabel('电视关注成员').selectOption('');
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-camera-moving', 'false');
+  await page.getByRole('button', { name: '管理', exact: true }).click();
+  await page.getByRole('button', { name: '暂停加入', exact: true }).click();
+  await expect(page.getByRole('button', { name: '恢复加入' })).toBeVisible();
+  await page.getByRole('button', { name: '恢复加入' }).click();
+  await page.getByRole('button', { name: '移除', exact: true }).click();
+  await expect(phone.getByRole('alert')).toContainText('成员已被移除');
+  await phone.reload(); await phone.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(phone.getByRole('alert')).toContainText('成员已被移除');
+  await page.getByRole('button', { name: '手机认领主持权限' }).click();
+  const claim = await page.locator('#invite-link').inputValue();
+  const host = await phoneContext.newPage(); await host.goto(claim);
+  await host.getByPlaceholder('怎么称呼你？').fill('手机主持'); await host.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(host.getByRole('button', { name: '管理', exact: true })).toBeVisible();
+  await host.getByRole('button', { name: '管理', exact: true }).click();
+  await host.getByRole('button', { name: '结束会话', exact: true }).click();
+  await host.getByRole('button', { name: '确认结束会话' }).click();
+  await expect(page.getByRole('alert')).toContainText('本次会话已结束');
+  expect(await host.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+  await phoneContext.close();
 });

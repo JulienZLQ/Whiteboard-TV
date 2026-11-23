@@ -3,8 +3,11 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import * as Y from 'yjs';
 
-export type Room = { id: string; editorToken: string; viewerToken: string; doc: Y.Doc; queue: Promise<void> };
-type RecordOnDisk = { schemaVersion: 1; id: string; editorToken: string; viewerToken: string; update: string };
+export type Access = { hostToken: string; inviteToken: string; claimToken: string; expiresAt: number; paused: boolean; ended: boolean; editors: string[] };
+export const secret = () => randomBytes(32).toString('hex');
+function freshAccess(hostToken: string): Access { return { hostToken, inviteToken: secret(), claimToken: secret(), expiresAt: Date.now() + 12 * 60 * 60 * 1000, paused: false, ended: false, editors: [] }; }
+export type Room = { id: string; access: Access; editorToken: string; viewerToken: string; doc: Y.Doc; queue: Promise<void> };
+type RecordOnDisk = { schemaVersion: 1; id: string; access: Access; editorToken: string; viewerToken: string; update: string };
 
 export class RoomStore {
   readonly rooms = new Map<string, Room>();
@@ -12,7 +15,8 @@ export class RoomStore {
   constructor(readonly directory: string) {}
   async create() {
     if (this.rooms.size >= 64) throw new Error('实验服务房间数已达上限');
-    const room: Room = { id: randomBytes(12).toString('hex'), editorToken: randomBytes(32).toString('hex'), viewerToken: randomBytes(32).toString('hex'), doc: new Y.Doc(), queue: Promise.resolve() };
+    const room: Room = { access: freshAccess(secret()), id: randomBytes(12).toString('hex'), editorToken: randomBytes(32).toString('hex'), viewerToken: randomBytes(32).toString('hex'), doc: new Y.Doc(), queue: Promise.resolve() };
+    room.access.hostToken = room.editorToken;
     await this.save(room, room.doc);
     this.rooms.set(room.id, room);
     return room;
@@ -34,7 +38,7 @@ export class RoomStore {
     if (data.schemaVersion !== 1 || data.id !== id) throw new Error('白板版本不兼容');
     const doc = new Y.Doc();
     Y.applyUpdate(doc, Buffer.from(data.update, 'base64'));
-    const room: Room = { id, editorToken: data.editorToken, viewerToken: data.viewerToken, doc, queue: Promise.resolve() };
+    const room: Room = { id, access: data.access ?? freshAccess(data.editorToken), editorToken: data.editorToken, viewerToken: data.viewerToken, doc, queue: Promise.resolve() };
     this.rooms.set(id, room);
     return room;
   }
@@ -42,7 +46,7 @@ export class RoomStore {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const target = join(this.directory, room.id + '.json');
     const temporary = target + '.' + randomBytes(6).toString('hex') + '.tmp';
-    const data: RecordOnDisk = { schemaVersion: 1, id: room.id, editorToken: room.editorToken, viewerToken: room.viewerToken, update: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') };
+    const data: RecordOnDisk = { schemaVersion: 1, id: room.id, access: room.access, editorToken: room.editorToken, viewerToken: room.viewerToken, update: Buffer.from(Y.encodeStateAsUpdate(doc)).toString('base64') };
     try {
       const handle = await open(temporary, 'wx', 0o600);
       try { await handle.writeFile(JSON.stringify(data)); await handle.sync(); } finally { await handle.close(); }

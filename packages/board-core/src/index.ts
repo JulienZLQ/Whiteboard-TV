@@ -2,7 +2,7 @@ export type Point = { x: number; y: number };
 export type Camera = Point & { zoom: number };
 export type Size = { width: number; height: number };
 export type Stroke = { id: string; points: number[]; color: string; width: number; kind: 'pen' | 'marker' };
-export type Member = { id: string; name: string; color: string; role: 'editor' | 'viewer'; cursor: Point | null };
+export type Member = { id: string; name: string; color: string; role: 'editor' | 'viewer'; cursor: Point | null; host?: boolean };
 export type Preview = { memberId: string; stroke: Stroke; updatedAt: number };
 export type Credentials = { roomId: string; token: string; role: 'editor' | 'viewer'; viewerToken?: string };
 export const COLORS = ['#315EFB', '#8738DB', '#FA8908'] as const;
@@ -49,14 +49,17 @@ export function validStroke(value: unknown): value is Stroke {
     && s.points.length >= 2 && s.points.length <= LIMITS.pointsPerStroke * 2 && s.points.length % 2 === 0
     && s.points.every(n => Number.isFinite(n) && Math.abs(n) <= LIMITS.coordinate);
 }
+export type AccessState = { inviteToken: string; expiresAt: number; paused: boolean; ended: boolean; claimToken?: string };
 export type ClientMessage =
-  | { type: 'hello'; protocolVersion: 1; roomId: string; token: string; name: string }
+  | { type: 'manage'; action: 'pause' | 'resume' | 'rotate' | 'remove' | 'end'; memberId?: string }
+  | { type: 'hello'; protocolVersion: 1; roomId: string; token: string; name: string; viewOnly?: boolean }
   | { type: 'presence'; cursor: Point | null }
   | { type: 'preview'; stroke: Stroke | null; seq: number }
   | { type: 'commit'; stroke: Stroke; mutationId: string }
   | { type: 'delete'; strokeId: string; mutationId: string };
 export type ServerMessage =
-  | { type: 'ready'; memberId: string; role: Member['role']; viewerToken: string; update: string; members: Member[] }
+  | { type: 'access'; access: AccessState }
+  | { type: 'ready'; token?: string; host?: boolean; access?: AccessState; memberId: string; role: Member['role']; viewerToken: string; update: string; members: Member[] }
   | { type: 'members'; members: Member[] }
   | { type: 'presence'; member: Member }
   | { type: 'preview'; memberId: string; stroke: Stroke | null }

@@ -8,5 +8,5 @@ const app = createWhiteboardServer({
   webRoot: resolve(fileURLToPath(new URL('../../web/dist', import.meta.url))),
 });
 const port = await app.listen(Number(process.env.PORT ?? 8787), host);
-console.log(`Whiteboard TV M1: http://${host}:${port}`);
+console.log(`Whiteboard TV M2: http://${host}:${port}`);
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void app.close().then(() => process.exit(0)); });

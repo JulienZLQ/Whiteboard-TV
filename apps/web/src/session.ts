@@ -1,9 +1,9 @@
 import * as Y from 'yjs';
-import { LIMITS, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
+import { LIMITS, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 
 export function newId() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''); }
 type Mutation = Extract<ClientMessage, { type: 'commit' | 'delete' }>;
-export type SessionState = { connection: 'connecting' | 'online' | 'offline' | 'denied'; pending: number; error: string; members: Member[]; memberId: string };
+export type SessionState = { host: boolean; access?: AccessState; connection: 'connecting' | 'online' | 'offline' | 'denied'; pending: number; error: string; members: Member[]; memberId: string };
 const decode = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0));
 
 export class BoardSession {
@@ -23,7 +23,7 @@ export class BoardSession {
   private lastPresence = 0;
   private lastPreview = 0;
   private queueKey: string;
-  private state: SessionState = { connection: 'connecting', pending: 0, error: '', members: [], memberId: '' };
+  private state: SessionState = { host: false, connection: 'connecting', pending: 0, error: '', members: [], memberId: '' };
   constructor(readonly credentials: Credentials, readonly name: string) {
     this.queueKey = `whiteboard.pending.${credentials.roomId}`;
     try {
@@ -62,7 +62,7 @@ export class BoardSession {
     this.publish({ connection: 'connecting' });
     const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
     this.socket = ws;
-    ws.onopen = () => this.send({ type: 'hello', protocolVersion: 1, roomId: this.credentials.roomId, token: this.credentials.token, name: this.name });
+    ws.onopen = () => this.send({ type: 'hello', protocolVersion: 1, roomId: this.credentials.roomId, token: this.credentials.token, name: this.name, viewOnly: this.credentials.role === 'viewer' });
     ws.onmessage = event => {
       let message: ServerMessage;
       try { message = JSON.parse(event.data); } catch { return; }
@@ -70,11 +70,15 @@ export class BoardSession {
         this.retry = 500; this.seq = 0;
         this.credentials.viewerToken = message.viewerToken;
         this.credentials.role = message.role;
+        if (message.token) this.credentials.token = message.token;
+        try { sessionStorage.setItem(`whiteboard.credentials.${this.credentials.roomId}.${message.role}`, JSON.stringify(this.credentials)); } catch { /* live session remains available */ }
         Y.applyUpdate(this.doc, decode(message.update));
         this.members.clear(); for (const member of message.members) this.members.set(member.id, member);
-        this.publish({ connection: 'online', memberId: message.memberId, members: message.members, error: '' });
+        this.publish({ connection: 'online', host: !!message.host, access: message.access, memberId: message.memberId, members: message.members, error: '' });
         this.inFlight.clear(); this.flush();
         this.redraw();
+      } else if (message.type === 'access') {
+        this.publish({ access: message.access });
       } else if (message.type === 'members') {
         this.members.clear(); for (const member of message.members) this.members.set(member.id, member);
         this.publish({ members: message.members }); this.redraw();
@@ -96,7 +100,7 @@ export class BoardSession {
       if (ws !== this.socket) return;
       this.members.clear(); this.previews.clear(); this.inFlight.clear(); this.redraw();
       if (this.stopped) return;
-      if (event.code === 1008) { this.publish({ connection: 'denied', members: [], error: '房间无法访问或连接受限，请重新打开邀请链接' }); return; }
+      if (event.code === 1008) { this.publish({ connection: 'denied', members: [], error: this.state.access?.ended ? '本次会话已结束，仍可导出本地副本' : '邀请已失效、成员已被移除或房间不可用，请联系主持人' }); return; }
       this.publish({ connection: 'offline', members: [] });
       if (navigator.onLine) this.timer = setTimeout(this.connect, this.retry);
       this.retry = Math.min(10_000, this.retry * 2);
@@ -131,6 +135,7 @@ export class BoardSession {
       this.inFlight.add(operation.mutationId); this.send(operation);
     }
   }
+  manage(action: 'pause' | 'resume' | 'rotate' | 'remove' | 'end', memberId?: string) { if (this.state.host && this.state.connection === 'online') this.send({ type: 'manage', action, memberId }); }
   retrySave = () => { this.inFlight.clear(); this.flush(); };
   presence(cursor: Member['cursor']) {
     if (this.state.connection !== 'online' || (cursor && performance.now() - this.lastPresence < 40)) return;

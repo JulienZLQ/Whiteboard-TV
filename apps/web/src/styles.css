@@ -6,3 +6,29 @@
 
 .canvas[data-drawing="true"]~.empty-state{display:none}
 @media(min-width:1101px){.brand{padding:12px 24px;min-height:80px;gap:22px}.brand h1{font-size:26px}.brand p{font-size:16px}.brand-mark{width:44px;height:44px}.collaboration{min-height:80px;gap:20px;padding:12px 16px}.collaboration .avatars span{width:44px;height:44px;font-size:19px}.connection{font-size:16px}.primary,.secondary{font-size:16px;min-height:46px;padding:0 20px}.toolbar{padding:8px;top:49%;gap:14px}.toolbar .icon-button{width:50px;height:56px}.tools,.colors{gap:10px}.color-button{height:40px}.color-button::after{width:27px;height:27px}.save-status{font-size:16px}.zoom-controls{font-size:16px;padding:3px 10px;gap:9px}}
+
+.tv-choice { display: flex !important; align-items: center; gap: 10px; font-size: 14px; }
+.tv-choice input { width: 18px; height: 18px; margin: 0; }
+.room-controls { max-height: 85dvh; overflow-y: auto; }
+.management-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 20px 0; }
+.management-actions button, .member-list button, .end-confirm button, .danger { padding: 10px 14px; }
+.member-list { list-style: none; padding: 0; margin: 20px 0; text-align: left; }
+.member-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #e8ebf2; }
+.member-list li > span { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.member-list small { color: #667085; white-space: nowrap; }
+.member-list i { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.danger { background: #fff1f0; border: 1px solid #ffd0cc; border-radius: 10px; color: #b42318; cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .5; }
+.end-confirm { border-radius: 12px; padding: 12px; background: #fff6f5; }
+.end-confirm .secondary { margin-left: 8px; }
+@media (max-width: 600px) { .manage-button { padding: 8px; } .collaboration .avatars { display: none; } .collaboration { gap: 8px; } }
+
+.tv-join { position: absolute; right: 28px; top: 110px; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 208px; }
+.tv-join span { font-size: 13px; color: #667085; }
+.tv-join .secondary { padding: 6px 10px; font-size: 13px; }
+.zoom-controls select { border: 0; background: transparent; color: #344054; max-width: 180px; font: inherit; }
+@media (max-width: 600px) { .tv-join { top: 130px; right: 12px; transform: scale(.8); transform-origin: top right; } }
+
+.welcome-form .tv-choice { flex-direction: row; margin-top: 18px; }
+.welcome-form .tv-choice input { width: 18px; height: 18px; }
+@media(max-width:600px) { .board:has(.manage-button) .brand>div:last-child { display: none; } }

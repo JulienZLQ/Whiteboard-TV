@@ -1,5 +1,5 @@
 import Konva from 'konva';
-import { fitCamera, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke } from '@whiteboard/board-core';
+import { fitCamera, strokeBounds, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke } from '@whiteboard/board-core';
 import { BoardSession, newId } from '../session';
 
 export type Tool = 'hand' | 'pen' | 'marker' | 'eraser';
@@ -22,6 +22,9 @@ export class BoardEngine {
   private pinchCenter: Point | null = null;
   private gesture = false;
   private moved = false;
+  private overview = { left: 0, top: 0, right: 1280, bottom: 720 };
+  private focusedMember = '';
+  private lastFrame = 0;
   tool: Tool = 'pen';
   color: string = COLORS[0];
   constructor(private element: HTMLDivElement, private session: BoardSession, private viewer: boolean, private onCamera: (camera: Camera) => void) {
@@ -43,6 +46,7 @@ export class BoardEngine {
     element.addEventListener('wheel', this.wheel, { signal, passive: false });
     this.schedule();
   }
+  private viewSize() { return { width: this.stage.width() - (this.viewer && this.stage.width() >= 900 ? 270 : 0), height: this.stage.height() }; }
   private local(event: PointerEvent): Point { const r = this.element.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
   private down = (event: PointerEvent) => {
     if (event.button !== 0 || this.viewer || this.session.getSnapshot().connection === 'denied') return;
@@ -128,7 +132,19 @@ export class BoardEngine {
   private render = () => {
     this.frame = 0;
     const strokes = this.session.getStrokes(), previews = this.session.getPreviews();
-    if (this.viewer || (!this.moved && strokes.length)) {
+    if (this.viewer) {
+      const bounds = strokeBounds([...strokes, ...previews.map(p => p.stroke)]);
+      if (bounds) this.overview = { left: Math.min(this.overview.left, bounds.left), top: Math.min(this.overview.top, bounds.top), right: Math.max(this.overview.right, bounds.right), bottom: Math.max(this.overview.bottom, bounds.bottom) };
+      const b = this.overview;
+      const target = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], this.viewSize());
+      const cursor = this.session.members.get(this.focusedMember)?.cursor;
+      if (cursor) { target.zoom = 1; target.x = this.viewSize().width / 2 - cursor.x; target.y = this.stage.height() / 2 - cursor.y; }
+      const now = performance.now(), alpha = 1 - Math.exp(-Math.min(32, now - this.lastFrame) / 65); this.lastFrame = now;
+      const moving = Math.abs(target.x - this.camera.x) > .1 || Math.abs(target.y - this.camera.y) > .1 || Math.abs(target.zoom - this.camera.zoom) > .0001;
+      this.element.dataset.cameraMoving = String(moving);
+      if (moving && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) { this.camera = { x: this.camera.x + (target.x - this.camera.x) * alpha, y: this.camera.y + (target.y - this.camera.y) * alpha, zoom: this.camera.zoom + (target.zoom - this.camera.zoom) * alpha }; this.schedule(); }
+      else this.camera = target;
+    } else if (!this.moved && strokes.length) {
       this.camera = fitCamera([...strokes, ...previews.map(p => p.stroke)], this.stage.size(), 100);
       if (!this.viewer) this.moved = true;
     }
@@ -164,6 +180,7 @@ export class BoardEngine {
     this.onCamera({ ...this.camera }); this.layer.batchDraw();
   };
   zoom(factor: number) { if (!this.viewer) { this.camera = zoomAt(this.camera, { x: this.stage.width() / 2, y: this.stage.height() / 2 }, factor); this.moved = true; this.schedule(); } }
-  fit() { this.camera = fitCamera(this.session.getStrokes(), this.stage.size()); this.moved = true; this.schedule(); }
+  focus(memberId: string) { this.focusedMember = memberId; this.schedule(); }
+  fit() { this.focusedMember = ''; this.overview = strokeBounds(this.session.getStrokes()) ?? { left: 0, top: 0, right: 1280, bottom: 720 }; this.camera = fitCamera(this.session.getStrokes(), this.viewSize()); this.moved = true; this.schedule(); }
   destroy() { cancelAnimationFrame(this.frame); this.resize.disconnect(); this.unsubscribe(); this.events.abort(); this.stage.destroy(); }
 }

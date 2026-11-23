@@ -5,9 +5,9 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as Y from 'yjs';
 import { COLORS, LIMITS, validPoint, validStroke, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
-import { RoomStore, type Room } from './store';
+import { RoomStore, secret, type Room } from './store';
 
-type Peer = { room: Room; member: Member; previewSeq: number; alive: boolean };
+type Peer = { room: Room; member: Member; token: string; previewSeq: number; alive: boolean };
 const matches = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 
@@ -19,7 +19,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M1"}'); return; }
+    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M2"}'); return; }
     if (url.pathname === '/api/rooms' && req.method === 'POST') {
       // JSON/custom-header requirement blocks ordinary cross-origin forms; no CORS is enabled.
       if (req.headers['x-whiteboard-client'] !== '1' || creating >= 4) { res.writeHead(403).end(); return; }
@@ -27,7 +27,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
       try {
         const room = await store.create();
         res.setHeader('Cache-Control', 'no-store'); res.setHeader('Content-Type', 'application/json');
-        res.writeHead(201).end(JSON.stringify({ roomId: room.id, token: room.editorToken, viewerToken: room.viewerToken, role: 'editor' }));
+        res.writeHead(201).end(JSON.stringify({ roomId: room.id, token: room.editorToken, viewerToken: room.viewerToken, role: url.searchParams.get('mode') === 'tv' ? 'viewer' : 'editor' }));
       } catch { res.writeHead(503).end(JSON.stringify({ error: '无法创建房间，请稍后重试' })); }
       finally { creating--; }
       return;
@@ -58,6 +58,8 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
     for (const [socket, peer] of peers) if (peer.room === room && socket !== except) send(socket, message);
   }
   function publishMembers(room: Room) { broadcast(room, { type: 'members', members: members(room) }); }
+  function access(room: Room, host = false) { const a = room.access; return { inviteToken: a.inviteToken, expiresAt: a.expiresAt, paused: a.paused, ended: a.ended, ...(host ? { claimToken: a.claimToken } : {}) }; }
+  function publishAccess(room: Room) { for (const [ws, p] of peers) if (p.room === room) send(ws, { type: 'access', access: access(room, p.member.host) }); }
   wss.on('connection', ws => {
     let authenticating = false, count = 0, period = Date.now();
     const deadline = setTimeout(() => { if (!peers.has(ws)) ws.close(1008, 'Authentication required'); }, 5000);
@@ -76,17 +78,60 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
         if (hello.protocolVersion !== 1 || typeof hello.token !== 'string' || !/^[a-f0-9]{64}$/.test(hello.token) || typeof hello.name !== 'string') { ws.close(1008, 'Invalid credentials'); return; }
         authenticating = true;
         void store.get(hello.roomId).then(room => {
-          if (ws.readyState !== WebSocket.OPEN) return;
-          const role = matches(hello.token, room.editorToken) ? 'editor' : matches(hello.token, room.viewerToken) ? 'viewer' : null;
-          if (!role || members(room).length >= 32) { ws.close(1008, 'Invalid credentials or room full'); return; }
-          const member: Member = { id: randomBytes(8).toString('hex'), name: hello.name.replace(/[\u0000-\u001f]/g, '').slice(0, 20) || '访客', color: COLORS[members(room).length % COLORS.length], role, cursor: null };
-          peers.set(ws, { room, member, previewSeq: -1, alive: true }); clearTimeout(deadline);
-          send(ws, { type: 'ready', memberId: member.id, role, viewerToken: room.viewerToken, update: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString('base64'), members: members(room) });
-          publishMembers(room);
+          room.queue = room.queue.then(async () => {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            let token = hello.token, host = matches(token, room.access.hostToken);
+            let role: Member['role'] | null = host || room.access.editors.includes(token) ? 'editor' : matches(token, room.viewerToken) ? 'viewer' : null;
+            const claim = !!room.access.claimToken && matches(token, room.access.claimToken);
+            const joining = matches(token, room.access.inviteToken);
+            if (room.access.ended || members(room).length >= 32 || ((joining || claim) && (room.access.paused || Date.now() >= room.access.expiresAt))) { ws.close(1008, 'Room unavailable'); return; }
+            if (claim || joining) {
+              if (!claim && room.access.editors.length >= 256) { ws.close(1008, 'Room full'); return; }
+              const previous = room.access;
+              token = claim ? room.access.hostToken : secret(); host = claim; role = 'editor';
+              room.access = { ...previous, editors: claim ? previous.editors : [...previous.editors, token], claimToken: claim ? '' : previous.claimToken };
+              try { await store.save(room, room.doc); } catch (e) { room.access = previous; throw e; }
+            }
+            if (ws.readyState !== WebSocket.OPEN) return;
+            if (!role) { ws.close(1008, 'Invalid credentials'); return; }
+            if (hello.viewOnly) role = 'viewer';
+            const member: Member = { id: randomBytes(8).toString('hex'), name: hello.name.replace(/[\u0000-\u001f]/g, '').slice(0, 20) || '访客', color: COLORS[members(room).length % COLORS.length], role, host, cursor: null };
+            peers.set(ws, { room, member, token, previewSeq: -1, alive: true }); clearTimeout(deadline);
+            send(ws, { type: 'ready', memberId: member.id, token, host, role, access: access(room, host), viewerToken: room.viewerToken, update: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString('base64'), members: members(room) });
+            publishMembers(room); publishAccess(room);
+          }).catch(() => ws.close(1008, 'Room unavailable'));
         }).catch(() => ws.close(1008, 'Room unavailable'));
         return;
       }
-      if (message.type === 'presence') {
+      if (message.type === 'manage') {
+        if (!peer.member.host) { send(ws, { type: 'error', message: '仅主持人可以管理会话' }); return; }
+        const command = message;
+        peer.room.queue = peer.room.queue.then(async () => {
+          const room = peer.room;
+          if (peers.get(ws) !== peer || room.access.ended) return;
+          const previous = room.access;
+          const next = { ...previous, editors: [...previous.editors] };
+          let removed: Peer | undefined;
+          if (command.action === 'pause') next.paused = true;
+          else if (command.action === 'resume') next.paused = false;
+          else if (command.action === 'rotate') { next.inviteToken = secret(); next.claimToken = secret(); next.expiresAt = Date.now() + 12 * 60 * 60 * 1000; }
+          else if (command.action === 'end') { next.ended = true; next.paused = true; }
+          else if (command.action === 'remove') {
+            removed = [...peers.values()].find(p => p.room === room && p.member.id === command.memberId && !p.member.host && p.member.role === 'editor');
+            if (!removed) return;
+            next.editors = next.editors.filter(t => t !== removed!.token);
+            next.inviteToken = secret(); next.claimToken = secret(); next.expiresAt = Date.now() + 12 * 60 * 60 * 1000;
+          } else return;
+          room.access = next;
+          try { await store.save(room, room.doc); } catch (e) { room.access = previous; throw e; }
+          publishAccess(room);
+          for (const [socket, p] of peers) if (p.room === room && (next.ended || (removed && p.token === removed.token))) {
+            peers.delete(socket); socket.close(1008, next.ended ? 'Session ended' : 'Removed by host');
+            broadcast(room, { type: 'preview', memberId: p.member.id, stroke: null });
+          }
+          publishMembers(room);
+        }).catch(() => send(ws, { type: 'error', message: '管理操作保存失败，请重试' }));
+      } else if (message.type === 'presence') {
         if (message.cursor !== null && !validPoint(message.cursor)) return;
         peer.member.cursor = message.cursor;
         broadcast(peer.room, { type: 'presence', member: peer.member }, ws);
@@ -102,6 +147,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
           send(ws, { type: 'error', message: '笔迹超出支持范围', mutationId: operation.mutationId }); return;
         }
         peer.room.queue = peer.room.queue.then(async () => {
+          if (peers.get(ws) !== peer || peer.room.access.ended) return;
           const room = peer.room, candidate = new Y.Doc();
           try {
             Y.applyUpdate(candidate, Y.encodeStateAsUpdate(room.doc));
