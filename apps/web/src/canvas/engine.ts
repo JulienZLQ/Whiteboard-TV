@@ -1,5 +1,5 @@
 import Konva from 'konva';
-import { fitCamera, contentBounds, contentFrame, objectLayout, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke, type BoardObject, type TextObject, type ImageObject } from '@whiteboard/board-core';
+import { fitCamera, canvasBounds, DEFAULT_CANVAS, contentBounds, contentFrame, objectLayout, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke, type BoardObject, type TextObject, type ImageObject } from '@whiteboard/board-core';
 import { ImageCache } from '../images';
 import { BoardSession, newId } from '../session';
 
@@ -32,7 +32,7 @@ export class BoardEngine {
   private pinchCenter: Point | null = null;
   private gesture = false;
   private moved = false;
-  private overview = { left: 0, top: 0, right: 1280, bottom: 720 };
+  private viewMode: 'canvas' | 'content' = 'canvas';
   private focusedMember = '';
   private focusedPoint: Point | null = null;
   private lastFrame = 0;
@@ -211,15 +211,14 @@ export class BoardEngine {
     const allObjects = [...objects, ...objectPreviews.map(p => p.object)];
     if (this.viewer) {
       const bounds = contentBounds([...strokes, ...previews.map(p => p.stroke)], allObjects);
-      if (bounds) this.overview = { left: Math.min(this.overview.left, bounds.left), top: Math.min(this.overview.top, bounds.top), right: Math.max(this.overview.right, bounds.right), bottom: Math.max(this.overview.bottom, bounds.bottom) };
-      const b = this.overview;
+      const b = this.viewMode === 'canvas' ? canvasBounds(bounds) : bounds ?? DEFAULT_CANVAS;
       const target = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], this.viewSize());
       const member = this.session.members.get(this.focusedMember);
       if (member?.cursor) this.focusedPoint = member.cursor;
       if (!member) this.focusedPoint = null;
       const cursor = this.focusedPoint;
       if (cursor) { target.zoom = 1; target.x = this.viewSize().width / 2 - cursor.x; target.y = this.stage.height() / 2 - cursor.y; }
-      const now = performance.now(), alpha = 1 - Math.exp(-Math.min(32, now - this.lastFrame) / 65); this.lastFrame = now;
+      const now = performance.now(), alpha = 1 - Math.exp(-Math.min(32, now - this.lastFrame) / 90); this.lastFrame = now;
       const moving = Math.abs(target.x - this.camera.x) > .1 || Math.abs(target.y - this.camera.y) > .1 || Math.abs(target.zoom - this.camera.zoom) > .0001;
       this.element.dataset.cameraMoving = String(moving);
       if (moving && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) { this.camera = { x: this.camera.x + (target.x - this.camera.x) * alpha, y: this.camera.y + (target.y - this.camera.y) * alpha, zoom: this.camera.zoom + (target.zoom - this.camera.zoom) * alpha }; this.schedule(); }
@@ -275,6 +274,7 @@ export class BoardEngine {
     }
     this.element.dataset.loadedImageCount = String(this.images.loaded);
     this.element.dataset.joinVisible = String(this.joinVisible);
+    this.element.dataset.viewMode = this.focusedMember ? 'member' : this.viewMode;
     this.element.dataset.objectCount = String(objects.length);
     this.element.dataset.objectPreviewCount = String(objectPreviews.length);
     this.element.dataset.selectedObject = this.selected;
@@ -300,6 +300,7 @@ export class BoardEngine {
   }
   zoom(factor: number) { if (!this.viewer) { this.camera = zoomAt(this.camera, { x: this.stage.width() / 2, y: this.stage.height() / 2 }, factor); this.moved = true; this.schedule(); } }
   focus(memberId: string) { this.focusedMember = memberId; this.focusedPoint = null; this.schedule(); }
-  fit() { this.focusedMember = ''; this.focusedPoint = null; this.overview = contentBounds(this.session.getStrokes(), this.session.getObjects()) ?? { left: 0, top: 0, right: 1280, bottom: 720 }; this.camera = fitCamera(contentFrame(this.session.getStrokes(), this.session.getObjects()), this.viewSize()); this.moved = true; this.schedule(); }
+  showCanvas() { this.viewMode = 'canvas'; this.focusedMember = ''; this.focusedPoint = null; this.schedule(); }
+  fit() { this.viewMode = 'content'; this.focusedMember = ''; this.focusedPoint = null; if (!this.viewer) this.camera = fitCamera(contentFrame(this.session.getStrokes(), this.session.getObjects()), this.viewSize()); this.moved = true; this.schedule(); }
   destroy() { this.images.destroy(); cancelAnimationFrame(this.frame); this.resize.disconnect(); this.unsubscribe(); this.events.abort(); this.stage.destroy(); }
 }

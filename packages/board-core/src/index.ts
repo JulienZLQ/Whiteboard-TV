@@ -125,3 +125,15 @@ export type ServerMessage =
   | { type: 'update'; update: string }
   | { type: 'saved'; mutationId: string }
   | { type: 'error'; message: string; mutationId?: string };
+
+// A stable, tiled canvas extent is distinct from fitting just the document's marks.
+export const DEFAULT_CANVAS = { left: 0, top: 0, right: 1280, bottom: 720 };
+export function canvasBounds(content: ReturnType<typeof contentBounds>) {
+  if (!content) return { ...DEFAULT_CANVAS };
+  return {
+    left: Math.min(0, Math.floor(content.left / 1280) * 1280),
+    top: Math.min(0, Math.floor(content.top / 720) * 720),
+    right: Math.max(1280, Math.ceil(content.right / 1280) * 1280),
+    bottom: Math.max(720, Math.ceil(content.bottom / 720) * 720),
+  };
+}

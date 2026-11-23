@@ -28,3 +28,14 @@ test('image objects use bounded geometry and cannot carry arbitrary external URL
   assert.equal(validObjectPatch({ width: 300 }), false);
   assert.deepEqual(contentBounds([], [image]), { left: -300, top: 10, right: 300, bottom: 410 });
 });
+
+test('default canvas retains blank space and grows by whole tiles around outlying content', async () => {
+  const { canvasBounds, DEFAULT_CANVAS } = await import('../src/index');
+  const small = contentBounds([], [{ ...object, x: 400, y: 200 }]);
+  assert.deepEqual(canvasBounds(small), DEFAULT_CANVAS);
+  assert.notDeepEqual(canvasBounds(small), small);
+  const outside = contentBounds([], [{ ...object, x: -200, y: 900 }]);
+  const frame = canvasBounds(outside);
+  assert.ok(frame.left <= outside!.left && frame.bottom >= outside!.bottom);
+  assert.ok(frame.right >= DEFAULT_CANVAS.right && frame.top <= DEFAULT_CANVAS.top);
+});

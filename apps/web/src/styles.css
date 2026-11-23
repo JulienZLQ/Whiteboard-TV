@@ -23,17 +23,27 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .end-confirm .secondary { margin-left: 8px; }
 @media (max-width: 600px) { .manage-button { padding: 8px; } .collaboration .avatars { display: none; } .collaboration { gap: 8px; } }
 
-.tv-join { position: absolute; right: 28px; top: 110px; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; width: 208px; }
-.tv-join span { font-size: 13px; color: #667085; }
-.tv-join .secondary { padding: 6px 10px; font-size: 13px; }
-.zoom-controls select { border: 0; background: transparent; color: #344054; max-width: 180px; font: inherit; }
-@media (max-width: 600px) { .tv-join { top: 130px; right: 12px; transform: scale(.8); transform-origin: top right; } }
+.tv-join { position: absolute; right: 20px; bottom: 92px; width: 208px; }
+.tv-join .qr-toggle { width: 100%; height: 46px; border: 0; background: white; font-size: 14px; box-shadow: var(--shadow); }
+.tv-qr-content { position: absolute; bottom: 58px; right: 0; width: 100%; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; transform-origin: bottom right; opacity: 1; visibility: visible; transform: translateY(0) scale(1); transition: opacity .2s ease, transform .26s cubic-bezier(.2,.7,.2,1), visibility 0s; }
+.tv-join.collapsed .tv-qr-content { opacity: 0; transform: translateY(10px) scale(.97); visibility: hidden; pointer-events: none; transition: opacity .18s ease, transform .24s cubic-bezier(.2,.7,.2,1), visibility 0s .24s; }
+.tv-qr-content span { font-size: 13px; color: #667085; }
+.zoom-controls select { border: 0; border-radius: 10px; padding: 10px 8px; background: transparent; color: #344054; max-width: 180px; font: inherit; }
+.zoom-controls .view-button { border: 0; min-height: 44px; font-size: 15px; padding: 0 14px; }
+.tv-mode button, .tv-mode a, .tv-mode select { transition: background-color .2s ease, color .2s ease, border-color .2s ease, box-shadow .24s ease; }
+.tv-mode button:focus, .tv-mode a:focus, .tv-mode select:focus { outline: none; background: #e8edf5; color: #172033; box-shadow: 0 5px 18px #1720331c; }
+.tv-mode button[aria-pressed=true] { background: #315efb; color: white; box-shadow: 0 4px 12px #315efb26; }
+.tv-mode button[aria-pressed=true]:focus { background: #244cde; box-shadow: 0 6px 20px #315efb38; }
+.tv-mode button:active { background: #dce4f0; }
+@media(max-height:650px) { .tv-qr-content img { width: 136px; height: 136px; } }
+@media(max-width:700px) { .tv-join { right: 12px; bottom: 90px; } .tv-mode .zoom-controls { left: 12px; right: 12px; justify-content: space-between; } .tv-mode .save-status { bottom: 144px; } .tv-mode .zoom-controls .view-button { font-size: 12px; padding: 0 6px; } .tv-mode .zoom-controls select { font-size: 12px; max-width: 110px; } }
+@media(prefers-reduced-motion:reduce) { .tv-mode button, .tv-mode a, .tv-mode select, .tv-qr-content, .tv-join.collapsed .tv-qr-content { transition: none; } }
 
 .welcome-form .tv-choice { flex-direction: row; margin-top: 18px; }
 .welcome-form .tv-choice input { width: 18px; height: 18px; }
 @media(max-width:600px) { .board:has(.manage-button) .brand>div:last-child { display: none; } }
 
-.tv-navigation button:focus, .tv-navigation a:focus, .tv-navigation input:focus, .tv-navigation select:focus { outline: 4px solid #315efb; outline-offset: 4px; box-shadow: 0 0 0 7px #ffffff; }
+.tv-navigation button:focus, .tv-navigation a:focus, .tv-navigation select:focus { outline: none; background: #e8edf5; color: #172033; box-shadow: 0 5px 18px #1720331c; }
 .tv-navigation dialog { scroll-padding: 18px; }
 @media(min-width:900px) {
   .tv-navigation .welcome-form { width: 560px; }
@@ -79,3 +89,5 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media(max-width:700px) { .toolbar .tools .icon-button { width: calc(100% / 8); min-width: 0; } .image-notice { top: 78px; width: calc(100% - 24px); } }
 
 .zoom-controls .show-tv-qr { border: 0; font-size: 14px; padding: 0 12px; min-height: 40px; }
+
+.tv-mode .primary:focus, .tv-navigation .primary:focus { background: #244cde; color: white; border-color: transparent; box-shadow: 0 6px 20px #315efb38; }

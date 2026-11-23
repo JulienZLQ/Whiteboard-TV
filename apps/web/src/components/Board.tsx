@@ -22,6 +22,7 @@ export function Board({ session }: { session: BoardSession }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false), [imageError, setImageError] = useState(''), [joinHidden, setJoinHidden] = useState(false);
   const [focus, setFocus] = useState('');
+  const [viewMode, setViewMode] = useState<'canvas' | 'content'>('canvas');
   const [manage, setManage] = useState(false);
   const [invite, setInvite] = useState(false), [empty, setEmpty] = useState(true);
   useEffect(() => {
@@ -34,7 +35,7 @@ export function Board({ session }: { session: BoardSession }) {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || invite || manage || editing) return;
-      if (event.key.toLowerCase() === 'f') engine.current?.fit();
+      if (event.key.toLowerCase() === 'f') { setFocus(''); setViewMode('content'); engine.current?.fit(); }
       if (event.key.toLowerCase() === 'p' && !viewer) setTool('pen');
       if (event.key.toLowerCase() === 'h' && !viewer) setTool('hand');
       if (event.key.toLowerCase() === 'v' && !viewer) setTool('select');
@@ -74,7 +75,7 @@ export function Board({ session }: { session: BoardSession }) {
   const status = state.connection === 'denied' ? '无法连接' : state.connection === 'offline' ? '连接中断' : state.connection === 'connecting' ? '正在连接' : '实时连接';
   return <main className={`board ${viewer ? 'tv-mode' : ''}`}>
     <div ref={container} className="canvas" data-testid="canvas" aria-label={viewer ? '电视白板总览' : '白板绘图区'} style={{ cursor: viewer ? 'default' : tool === 'hand' ? 'grab' : tool === 'select' ? 'default' : tool === 'text' ? 'text' : 'crosshair' }}/>
-    <header className="brand panel"><div className="brand-mark" aria-hidden="true">W</div><div><h1>共创白板</h1><p>{viewer ? '电视总览 · 全部内容' : '每个人的想法，都在这里'}</p></div></header>
+    <header className="brand panel"><div className="brand-mark" aria-hidden="true">W</div><div><h1>共创白板</h1><p>{viewer ? focus ? '电视视图 · 关注成员' : viewMode === 'canvas' ? '电视视图 · 完整画布' : '电视视图 · 全部内容' : '每个人的想法，都在这里'}</p></div></header>
     <div className="collaboration panel">
       <div className="avatars" aria-label={`${state.members.length} 台设备在线`}>{state.members.slice(0, 3).map(member => <span key={member.id} title={`${member.name}${member.role === 'viewer' ? ' · 观看' : ''}`} style={{ backgroundColor: member.color }}>{member.role === 'viewer' ? <Monitor size={17}/> : member.name.slice(0, 1)}</span>)}</div>
       <span className={`connection ${state.connection}`} role="status"><i/>{status}</span>
@@ -92,12 +93,12 @@ export function Board({ session }: { session: BoardSession }) {
     {editing ? <ObjectEditor session={session} object={editing} onClose={() => setEditing(null)} onSaved={id => { setEditing(null); setTool('select'); engine.current?.select(id); }}/> : null}
     <footer className="save-status panel" aria-live="polite">{state.connection !== 'online' ? <WifiOff size={18}/> : <Check size={18}/>}<span>{state.pending ? `${state.pending} 项待保存` : state.connection === 'online' ? '已保存' : '等待连接'}</span>{!androidTV() ? <button className="icon-button export" aria-label="导出本地副本" title="导出本地副本" onClick={exportCopy}><Download size={17}/></button> : null}</footer>
     <div className="zoom-controls panel" aria-label="画布视角">
-      {viewer && joinHidden ? <button className="secondary show-tv-qr" onClick={() => setJoinHidden(false)}>显示加入二维码</button> : null}
+      {viewer ? <button className="secondary view-button" aria-pressed={!focus && viewMode === 'canvas'} onClick={() => { setFocus(''); setViewMode('canvas'); engine.current?.showCanvas(); }}>完整画布</button> : null}
       {!viewer ? <button className="icon-button" aria-label="缩小" onClick={() => engine.current?.zoom(0.8)}><Minus size={20}/></button> : null}
-      {viewer ? <select aria-label="电视关注成员" value={focus} onChange={event => { setFocus(event.target.value); engine.current?.focus(event.target.value); }}><option value="">完整画布</option>{state.members.filter(m => m.role === 'editor').map(m => <option key={m.id} value={m.id}>关注 {m.name}</option>)}</select> : null}
-      <span>{viewer ? focus ? '关注中' : '总览' : `${Math.round(camera.zoom * 100)}%`}</span>
+      {viewer ? <select aria-label="电视关注成员" value={focus} onChange={event => { setFocus(event.target.value); engine.current?.focus(event.target.value); }}><option value="">关注成员</option>{state.members.filter(m => m.role === 'editor').map(m => <option key={m.id} value={m.id}>关注 {m.name}</option>)}</select> : null}
+      {!viewer ? <span>{`${Math.round(camera.zoom * 100)}%`}</span> : null}
       {!viewer ? <button className="icon-button" aria-label="放大" onClick={() => engine.current?.zoom(1.25)}><Plus size={20}/></button> : null}
-      <span className="zoom-divider"/><button className="icon-button" aria-label="适配全部内容" title="适配全部内容 (F)" onClick={() => { setFocus(''); engine.current?.fit(); }}><Scan size={21}/></button>
+      <span className="zoom-divider"/><button className={viewer ? "secondary view-button" : "icon-button"} aria-pressed={viewer ? !focus && viewMode === 'content' : undefined} aria-label="显示全部内容" title="显示全部内容 (F)" onClick={() => { setFocus(''); setViewMode('content'); engine.current?.fit(); }}>{viewer ? '显示全部内容' : <Scan size={21}/>}</button>
     </div>
     {uploading ? <div className="tool-hint" role="status">正在压缩并上传图片…</div> : null}
     {imageError ? <div className="image-notice panel" role="alert"><span>{imageError}</span><button className="secondary" onClick={() => setImageError('')}>关闭</button></div> : null}

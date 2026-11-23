@@ -36,7 +36,7 @@ test('independent editor and TV receive in-progress strokes, erasures and recove
   await mobile.reload(); await mobile.getByRole('button', { name: '加入白板', exact: true }).click();
   await expect(mobile.getByTestId('canvas')).toHaveAttribute('data-stroke-count', '1');
   // Reset editor view so the eraser operates in a predictable position.
-  await page.getByRole('button', { name: '适配全部内容' }).click();
+  await page.getByRole('button', { name: '显示全部内容' }).click();
   // Use the stroke's actual world endpoint from the exported document.
   const downloadPromise = page.waitForEvent('download'); await page.getByRole('button', { name: '导出本地副本' }).click();
   const download = await downloadPromise; expect(download.suggestedFilename()).toBe('whiteboard-backup.json');
@@ -327,10 +327,10 @@ test('phone uploads, moves and resizes images with both TV renderers; QR collaps
   await tv.getByRole('button', { name: '收起二维码' }).click();
   await expect(tv.getByTestId('canvas')).toHaveAttribute('data-join-visible', 'false');
   expect(await canvas.getAttribute('data-camera')).toBe(cameraBefore);
-  await page.mouse.move(180, 350); await legacy.getByRole('button', { name: '完整画布', exact: true }).click();
+  await page.mouse.move(180, 350); await legacy.getByRole('button', { name: '关注成员', exact: true }).click();
   await expect(legacy.getByRole('button', { name: '关注 小林' })).toBeVisible();
   await expect.poll(async () => JSON.parse((await legacy.locator('#board').getAttribute('data-camera'))!).zoom).toBe(1);
-  await legacy.getByRole('button', { name: '适配全部内容' }).click(); await expect(legacy.getByRole('button', { name: '完整画布', exact: true })).toBeVisible();
+  await legacy.getByRole('button', { name: '显示全部内容' }).click(); await expect(legacy.getByRole('button', { name: '完整画布', exact: true })).toBeVisible();
   await page.reload(); await page.getByRole('button', { name: '加入白板', exact: true }).click();
   await expect(page.getByTestId('canvas')).toHaveAttribute('data-loaded-image-count', '1');
   backup = await exported(page); const point = await objectPoint(page, backup.objects[0]);
@@ -338,4 +338,54 @@ test('phone uploads, moves and resizes images with both TV renderers; QR collaps
   await expect(legacy.locator('#board')).toHaveAttribute('data-object-count', '0'); await expect(tv.getByTestId('canvas')).toHaveAttribute('data-object-count', '0');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]); await legacyContext.close(); await tvContext.close();
+});
+
+test('TV controls keep the QR anchor fixed and distinguish canvas from content with smooth motion', async ({ browser, page }) => {
+  test.setTimeout(60000);
+  await create(page);
+  await page.getByRole('button', { name: '添加便签', exact: true }).click(); await page.mouse.click(500, 300);
+  await page.getByLabel('内容', { exact: true }).fill('一小块内容'); await page.getByRole('button', { name: '保存内容' }).click();
+  const url = (await page.getByRole('link', { name: '电视视图' }).getAttribute('href'))!;
+  const parsed = new URL(url), credentials = { roomId: parsed.searchParams.get('room')!, role: 'viewer', token: new URLSearchParams(parsed.hash.slice(1)).get('token')! };
+  for (const legacy of [false, true]) {
+    const context = await browser.newContext({ viewport: legacy ? { width: 960, height: 540 } : { width: 1920, height: 1080 } });
+    if (legacy) await context.addInitScript(value => localStorage.setItem('whiteboard.tv.last', JSON.stringify(value)), credentials);
+    const tv = await context.newPage(), errors: string[] = []; tv.on('pageerror', e => errors.push(e.message));
+    await tv.goto(legacy ? '/legacy-tv.html?room=' + credentials.roomId : url);
+    if (!legacy) await tv.getByRole('button', { name: '打开电视总览' }).click();
+    const canvas = legacy ? tv.locator('#board') : tv.getByTestId('canvas');
+    const toggle = legacy ? tv.locator('#toggle-qr') : tv.locator('.qr-toggle');
+    await expect(canvas).toHaveAttribute('data-object-count', '1');
+    await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
+    const anchor = await toggle.boundingBox(); expect(anchor).toBeTruthy();
+    for (let i = 0; i < 4; i++) {
+      await toggle.focus(); await tv.keyboard.press('Enter');
+      await expect(toggle).toBeFocused();
+      await expect(toggle).toHaveAttribute('aria-expanded', i % 2 ? 'true' : 'false');
+      expect(await toggle.boundingBox()).toEqual(anchor);
+      await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
+      expect(await toggle.boundingBox()).toEqual(anchor);
+      if (i % 2 === 0) await expect(tv.getByAltText('电视编辑加入二维码')).not.toBeVisible();
+      else await expect(tv.getByAltText('电视编辑加入二维码')).toBeVisible();
+    }
+    const qrBounds = await (legacy ? tv.locator('#qr-content') : tv.locator('.tv-qr-content')).boundingBox();
+    const footer = await (legacy ? tv.locator('#view-controls') : tv.locator('.zoom-controls')).boundingBox();
+    expect(qrBounds!.y + qrBounds!.height).toBeLessThan(anchor!.y);
+    expect(anchor!.y + anchor!.height).toBeLessThan(footer!.y);
+    const full = tv.getByRole('button', { name: '完整画布', exact: true });
+    const content = tv.getByRole('button', { name: '显示全部内容', exact: true });
+    await full.click(); await expect(full).toHaveAttribute('aria-pressed', 'true');
+    await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
+    const wide = JSON.parse((await canvas.getAttribute('data-camera'))!);
+    await content.click(); await expect(content).toHaveAttribute('aria-pressed', 'true'); await expect(full).toHaveAttribute('aria-pressed', 'false');
+    await expect(canvas).toHaveAttribute('data-view-mode', 'content');
+    await expect(canvas).toHaveAttribute('data-camera-moving', 'true');
+    await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
+    expect(JSON.parse((await canvas.getAttribute('data-camera'))!).zoom).toBeGreaterThan(wide.zoom);
+    const style = await content.evaluate(el => ({ outline: getComputedStyle(el).outlineStyle, transition: getComputedStyle(el).transitionDuration, background: getComputedStyle(el).backgroundColor }));
+    expect(style.outline).toBe('none'); expect(style.transition).not.toBe('0s'); expect(style.background).not.toBe('rgb(255, 255, 255)');
+    await full.click(); await expect(canvas).toHaveAttribute('data-view-mode', 'canvas'); await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
+    expect(JSON.parse((await canvas.getAttribute('data-camera'))!).zoom).toBeCloseTo(wide.zoom, 3);
+    await context.close(); expect(errors).toEqual([]);
+  }
 });

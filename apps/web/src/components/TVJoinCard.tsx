@@ -9,9 +9,11 @@ export function TVJoinCard({ access, credentials, hidden, onToggle }: { access: 
   useEffect(() => { let active = true; setQr(''); QRCode.toDataURL(url, { width: 180, margin: 2 }).then(value => { if (active) setQr(value); }).catch(() => {}); return () => { active = false; }; }, [url]);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   const unavailable = access.paused || access.ended || now >= access.expiresAt;
-  if (hidden) return null;
-  return <aside className="tv-join panel" aria-label="扫码加入白板">
-    <button className="secondary" aria-expanded={!hidden} onClick={onToggle}>{hidden ? '显示加入二维码' : '收起二维码'}</button>
-    {!hidden ? <>{unavailable ? <p>加入已暂停或邀请已过期</p> : qr ? <img width={180} height={180} src={qr} alt="电视编辑加入二维码"/> : <p>二维码准备中…</p>}<strong>扫码，一起写</strong><span>手机 / Pad 独立编辑</span></> : null}
+  return <aside className={`tv-join ${hidden ? 'collapsed' : ''}`} aria-label="扫码加入白板">
+    <div id="tv-qr-content" className="tv-qr-content panel" aria-hidden={hidden}>
+      {unavailable ? <p>加入已暂停或邀请已过期</p> : qr ? <img width={180} height={180} src={qr} alt="电视编辑加入二维码"/> : <p>二维码准备中…</p>}
+      <strong>扫码，一起写</strong><span>手机 / Pad 独立编辑</span>
+    </div>
+    <button className="secondary qr-toggle" aria-controls="tv-qr-content" aria-expanded={!hidden} onClick={onToggle}>{hidden ? '显示加入二维码' : '收起二维码'}</button>
   </aside>;
 }

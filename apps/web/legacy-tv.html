@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f7f8fa"><link rel="icon" href="data:,"><title>共创白板 · 电视</title></head>
 <body><canvas id="board" aria-label="电视白板总览"></canvas>
-<header class="panel brand"><b class="logo">W</b><div><h1>共创白板</h1><span>电视总览 · 全部内容</span></div></header>
+<header class="panel brand"><b class="logo">W</b><div><h1>共创白板</h1><span id="view-label">电视视图 · 完整画布</span></div></header>
 <div class="panel connection"><i id="status-dot"></i><span id="status">准备就绪</span></div>
 <section id="welcome"><div class="welcome-mark">W</div><h2>让每个想法，都被看见</h2><p>创建白板，邀请手机 / Pad 扫码共创</p><button id="create" class="primary">创建电视白板</button><p id="error" role="alert"></p></section>
-<aside id="join" class="panel" hidden><button id="toggle-qr" aria-expanded="true">收起二维码</button><div id="qr-content"><h2 id="qr-title">扫码，一起写</h2><img id="qr" width="200" height="200" alt="电视编辑加入二维码"><p id="qr-hint">手机 / Pad 独立编辑</p><button id="claim" hidden>手机管理</button></div></aside>
+<aside id="join" hidden><div id="qr-content" class="panel" aria-hidden="false"><h2 id="qr-title">扫码，一起写</h2><img id="qr" width="200" height="200" alt="电视编辑加入二维码"><p id="qr-hint">手机 / Pad 独立编辑</p><button id="claim" hidden>手机管理</button></div><button id="toggle-qr" aria-controls="qr-content" aria-expanded="true">收起二维码</button></aside>
 <div id="empty" hidden><h2>等待第一个想法</h2><p>每一笔、每张便签，都会出现在这里</p></div>
-<footer id="footer" hidden><span id="saved" class="panel">实时同步</span><button id="focus" class="panel">完整画布</button><button id="fit" class="panel">适配全部内容</button></footer>
+<footer id="footer" hidden><span id="saved" class="panel">实时同步</span><div id="view-controls" class="panel"><button id="canvas-view" aria-pressed="true">完整画布</button><button id="focus">关注成员</button><button id="fit" aria-pressed="false">显示全部内容</button></div></footer>
 <script type="module" src="/src/legacy-tv.ts"></script></body></html>

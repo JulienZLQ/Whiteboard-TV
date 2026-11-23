@@ -27,6 +27,7 @@
 11. [文字、便签与对象操作](docs/11-text-notes.md)
 12. [旧版电视兼容与首次真机安装](docs/12-legacy-tv.md)
 13. [贴图、资源保存与电视视图优化](docs/13-images-tv-view.md)
+14. [电视按钮状态、固定二维码与画布范围](docs/14-tv-controls.md)
 
 ## 推进方式
 
