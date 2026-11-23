@@ -259,6 +259,15 @@ test('legacy TV creates a room, receives phone previews and restores through rel
   }));
   await page.goto('/legacy-tv.html?mode=tv&tvShell=android');
   await expect(page.getByRole('button', { name: '创建电视白板' })).toBeFocused();
+  // The header must not trap the remote before a board exists.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(() => window.WhiteboardTV!.key('ArrowUp'));
+    await expect(page.locator('#tv-settings')).toBeFocused();
+    await page.evaluate(() => window.WhiteboardTV!.key('ArrowRight'));
+    await expect(page.locator('#tv-settings')).toBeFocused();
+    await page.evaluate(() => window.WhiteboardTV!.key('ArrowDown'));
+    await expect(page.getByRole('button', { name: '创建电视白板' })).toBeFocused();
+  }
   await page.evaluate(() => window.WhiteboardTV!.key('Enter'));
   await expect(page.getByAltText('电视编辑加入二维码')).toBeVisible();
   await expect.poll(() => invite).toContain('#token=');

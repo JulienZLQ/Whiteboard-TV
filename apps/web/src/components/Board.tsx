@@ -103,7 +103,7 @@ export function Board({ session }: { session: BoardSession }) {
     <div className={viewer ? "collaboration tv-header" : "collaboration panel"}>
       {!viewer ? <div className="avatars" aria-label={`${state.members.length} 台设备在线`}>{state.members.slice(0, 3).map(member => <span key={member.id} title={`${member.name}${member.role === 'viewer' ? ' · 观看' : ''}`} style={{ backgroundColor: member.color }}>{member.role === 'viewer' ? <Monitor size={17}/> : member.name.slice(0, 1)}</span>)}</div> : null}
       {viewer ? <span className="tv-sync tv-header-item" role="status">{state.connection === 'online' ? '实时同步' : '等待同步'}</span> : null}
-      <span className={`connection ${state.connection} ${viewer ? 'tv-header-item' : ''}`} role="status"><i/>{status}</span>
+      <span className={`connection ${state.connection} ${viewer ? 'tv-header-item' : ''}`} role="status"><i/><span title={status}>{status}</span></span>
       {!viewer ? <span className="header-divider"/> : null}
       {!viewer && state.connection === 'online' ? <a aria-label="电视视图" className="secondary tv-link" href={roomLink(session.credentials, true)} target="_blank" rel="noreferrer"><Monitor size={19}/><span>电视视图</span></a> : null}
       {!viewer && state.host ? <button className="secondary manage-button" onClick={() => setManage(true)}>管理</button> : null}
@@ -123,7 +123,7 @@ export function Board({ session }: { session: BoardSession }) {
     {state.notice ? <div className="history-notice panel" role="status"><span>{state.notice}</span><button className="secondary" onClick={session.dismissNotice}>知道了</button></div> : null}
     {exportOpen ? <div className="export-menu panel" role="group" aria-label="导出白板"><strong>导出 PNG 图片</strong><button className="secondary" disabled={exporting} onClick={() => void exportPNG('canvas')}>导出完整画布</button><button className="secondary" disabled={exporting} onClick={() => void exportPNG('content')}>导出全部内容</button><small>{exporting ? '正在生成图片…' : '白色背景 · 最长边 4096 像素'}</small><button className="secondary" disabled={exporting} onClick={() => setExportOpen(false)}>关闭导出</button></div> : null}
     {!viewer ? <footer className="save-status panel" aria-live="polite">{state.connection !== 'online' ? <WifiOff size={18}/> : <Check size={18}/>}<span>{state.pending ? `${state.pending} 项待保存` : state.connection === 'online' ? '已保存' : '等待连接'}</span>{!androidTV() ? <button className="icon-button export" aria-label="导出本地副本" title="导出本地副本" onClick={exportCopy}><Download size={17}/></button> : null}{!androidTV() ? <button className="secondary png-export" aria-label="导出图片" title="导出图片" aria-expanded={exportOpen} onClick={() => setExportOpen(!exportOpen)}><ImageDown size={17}/><span>导出图片</span></button> : null}</footer> : <button className="tv-visibility-toggle panel secondary" data-tv-row="visibility" aria-pressed={uiHidden} onClick={() => setUIHidden(!uiHidden)}>{uiHidden ? '显示界面' : '隐藏界面'}</button>}
-    <div className="zoom-controls panel" aria-label="画布视角">
+    <div className="zoom-controls panel" aria-label="画布视角" data-tv-view={viewer ? viewMode : undefined} data-tv-following={viewer ? !!focus : undefined}>
       {viewer ? <button data-tv-row="view" className="secondary view-button" aria-pressed={!focus && viewMode === 'canvas'} onFocus={() => chooseView('canvas')} onClick={() => chooseView('canvas')}>完整画布</button> : null}
       {!viewer ? <button className="icon-button" aria-label="缩小" onClick={() => engine.current?.zoom(0.8)}><Minus size={20}/></button> : null}
 

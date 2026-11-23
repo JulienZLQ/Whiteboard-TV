@@ -43,3 +43,17 @@
 /* Flex gap is unsupported by the TV's Chromium 66; margins keep each card separate. */
 .tv-mode .collaboration.tv-header>.tv-header-item+.tv-header-item,.legacy-tv .tv-header>.tv-header-item+.tv-header-item{margin-left:10px}
 @media(max-width:700px){.tv-mode .collaboration.tv-header>.tv-header-item+.tv-header-item{margin-left:6px}}
+
+/* A single highlight travels below both transparent labels, including on quick reversals. */
+.tv-mode .zoom-controls.panel[data-tv-view],.legacy-tv #view-controls[data-tv-view]{isolation:isolate}
+.tv-mode .zoom-controls.panel[data-tv-view]::before,.legacy-tv #view-controls[data-tv-view]::before{content:'';position:absolute;left:5px;top:5px;bottom:5px;width:calc((100% - 10px) / 2);border-radius:12px;background:#315efb;box-shadow:0 4px 12px #315efb26;pointer-events:none;transform:translateX(0);opacity:1;transition:transform .32s cubic-bezier(.22,.8,.25,1),opacity .2s ease;z-index:0}
+.tv-mode .zoom-controls.panel[data-tv-view=content]::before,.legacy-tv #view-controls[data-tv-view=content]::before{transform:translateX(100%)}
+.tv-mode .zoom-controls.panel[data-tv-following=true]::before,.legacy-tv #view-controls[data-tv-following=true]::before{opacity:0}
+.tv-mode .zoom-controls.panel[data-tv-view] .view-button,.legacy-tv #view-controls[data-tv-view] button{position:relative;z-index:1;background:transparent;box-shadow:none;color:#172033;transition:color .22s ease}
+.tv-mode .zoom-controls.panel[data-tv-view] .view-button[aria-pressed=true],.legacy-tv #view-controls[data-tv-view] button[aria-pressed=true]{color:#fff}
+/* Four equal header surfaces remain distinct; only the two action buttons are focusable. */
+.tv-mode .collaboration.tv-header>.tv-header-item,.legacy-tv .tv-header>.tv-header-item,.legacy-tv .tv-header #saved{width:120px;flex:0 0 120px}
+@media(max-width:700px){.tv-mode .collaboration.tv-header>.tv-header-item{width:calc((100vw - 42px) / 4);flex-basis:calc((100vw - 42px) / 4)}}
+@media(prefers-reduced-motion:reduce){.tv-mode .zoom-controls.panel[data-tv-view]::before,.legacy-tv #view-controls[data-tv-view]::before,.tv-mode .zoom-controls.panel[data-tv-view] .view-button,.legacy-tv #view-controls[data-tv-view] button{transition:none}}
+
+.tv-header>.tv-header-item>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tv-header>.tv-header-item>i{flex-shrink:0}

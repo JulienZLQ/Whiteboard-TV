@@ -31,7 +31,8 @@ function persist() {
 }
 function status(text: string, online = false) {
   get('status').textContent = text; get('status-dot').style.background = online ? '#2abc79' : '#e9a23b';
-  get('saved').textContent = online ? '实时同步' : text;
+  get('saved').textContent = online ? '实时同步' : '等待同步';
+  get('status').title = text;
 }
 function showBoard() { get('welcome').hidden = true; get('footer').hidden = false; get('manage-members').hidden = false; get('canvas-view').focus(); schedule(); }
 function updateQR() {
@@ -104,6 +105,8 @@ get('toggle-qr').onclick = () => {
   get('toggle-qr').setAttribute('aria-expanded', String(!qrHidden)); schedule();
 };
 function updateViewControls() {
+  get('view-controls').dataset.tvView = viewMode;
+  get('view-controls').dataset.tvFollowing = String(!!focusedMember);
 
   get('canvas-view').setAttribute('aria-pressed', String(!focusedMember && viewMode === 'canvas'));
   get('fit').setAttribute('aria-pressed', String(!focusedMember && viewMode === 'content'));

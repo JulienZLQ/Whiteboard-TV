@@ -1,6 +1,6 @@
 import { fitBounds, type Camera } from '@whiteboard/board-core';
 
-/** Rows follow the screen: header → QR → view. Left of the views reaches the UI toggle. */
+/** Rows follow the screen: header → welcome (before creation), or header → QR → view. Left of the views reaches the UI toggle. */
 export function rowNavigation() {
   let column = 0;
   return (key: string, active: HTMLElement, items: HTMLElement[]): boolean => {
@@ -21,9 +21,12 @@ export function rowNavigation() {
       else same[Math.max(0, Math.min(same.length - 1, index))]?.focus();
     } else if (key === 'ArrowUp') {
       if (row === 'view') move(items.some(el => el.dataset.tvRow === 'join') ? 'join' : 'header');
-      if (row === 'join') move('header', 1);
+      if (row === 'join' || row === 'welcome') move('header', 1);
     } else {
-      if (row === 'header') move(items.some(el => el.dataset.tvRow === 'join') ? 'join' : 'view', column);
+      if (row === 'header') {
+        const target = ['join', 'view', 'welcome'].find(target => items.some(el => el.dataset.tvRow === target));
+        if (target) move(target, target === 'view' ? column : 0);
+      }
       if (row === 'join') move('view', column);
     }
     return true;
