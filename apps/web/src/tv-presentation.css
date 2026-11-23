@@ -26,3 +26,20 @@
 .tv-ui-hidden .tv-mode .tv-qr-content,.tv-ui-hidden .legacy-tv #qr-content{opacity:0;visibility:hidden;transition:opacity .22s ease,visibility 0s .22s}
 .tv-mode .zoom-controls button[aria-pressed=true]:focus{background:#315efb;color:white}
 @media(prefers-reduced-motion:reduce){.tv-ui-hidden .tv-mode>*,.tv-ui-hidden .legacy-tv>*,.tv-ui-hidden .legacy-tv #view-controls,.tv-ui-hidden .tv-mode .tv-qr-content,.tv-ui-hidden .legacy-tv #qr-content{transition:none}}
+
+/* Four separate header surfaces; status labels never enter the remote focus order. */
+.tv-mode .collaboration.tv-header,.legacy-tv .tv-header{padding:0;min-height:0;gap:0;background:transparent;border:0;box-shadow:none}
+.tv-mode .collaboration.tv-header>.tv-header-item,.legacy-tv .tv-header>.tv-header-item,.legacy-tv .tv-header #saved{display:inline-flex;align-items:center;justify-content:center;min-height:52px;margin:0;padding:0 16px;border:0;border-radius:14px;background:#fff;box-shadow:0 4px 16px #1720330b;font-size:16px;white-space:nowrap}
+.tv-mode .collaboration.tv-header>button:focus,.legacy-tv .tv-header>button:focus{background:#315efb;color:white;box-shadow:0 5px 18px #315efb30}
+.tv-mode .collaboration.tv-header>[role=status],.legacy-tv .tv-header>[role=status]{cursor:default;user-select:none}
+/* One shared width per renderer keeps the QR toggle and equal view segments aligned. */
+.tv-mode{--tv-controls-width:208px}.legacy-tv{--tv-controls-width:232px}
+.tv-mode .tv-join,.legacy-tv #join{width:var(--tv-controls-width)}
+.tv-mode .zoom-controls.panel,.legacy-tv #view-controls{width:var(--tv-controls-width);padding:5px;gap:0;border-radius:16px;justify-content:stretch}
+.tv-mode .zoom-controls.panel .view-button,.legacy-tv #view-controls button{flex:1 1 0;width:0;min-width:0;margin:0;padding:12px 2px;font-size:15px;white-space:nowrap;text-align:center}
+@media(max-width:1100px){.tv-mode .collaboration.tv-header>.tv-header-item,.legacy-tv .tv-header>.tv-header-item,.legacy-tv .tv-header #saved{font-size:15px;padding:0 12px}}
+@media(max-width:700px){.tv-mode .zoom-controls.panel{left:auto;right:12px}.tv-mode .collaboration.tv-header{top:84px;right:12px;gap:0}.tv-mode .collaboration.tv-header>.tv-header-item{font-size:12px;padding:0 9px;min-height:42px}.tv-mode .zoom-controls.panel .view-button{font-size:14px}}
+
+/* Flex gap is unsupported by the TV's Chromium 66; margins keep each card separate. */
+.tv-mode .collaboration.tv-header>.tv-header-item+.tv-header-item,.legacy-tv .tv-header>.tv-header-item+.tv-header-item{margin-left:10px}
+@media(max-width:700px){.tv-mode .collaboration.tv-header>.tv-header-item+.tv-header-item{margin-left:6px}}

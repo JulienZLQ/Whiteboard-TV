@@ -100,14 +100,14 @@ export function Board({ session }: { session: BoardSession }) {
   return <main className={`board ${viewer ? 'tv-mode' : ''}`}>
     <div ref={container} className="canvas" data-testid="canvas" aria-label={viewer ? '电视白板总览' : '白板绘图区'} style={{ cursor: viewer ? 'default' : tool === 'hand' ? 'grab' : tool === 'select' ? 'default' : tool === 'text' ? 'text' : 'crosshair' }}/>
     <header className="brand panel"><div className="brand-mark" aria-hidden="true">W</div><div><h1>共创白板</h1><p>{viewer ? focus ? '电视视图 · 关注成员' : viewMode === 'canvas' ? '电视视图 · 完整画布' : '电视视图 · 全部内容' : '每个人的想法，都在这里'}</p></div></header>
-    <div className="collaboration panel">
-      <div className="avatars" aria-label={`${state.members.length} 台设备在线`}>{state.members.slice(0, 3).map(member => <span key={member.id} title={`${member.name}${member.role === 'viewer' ? ' · 观看' : ''}`} style={{ backgroundColor: member.color }}>{member.role === 'viewer' ? <Monitor size={17}/> : member.name.slice(0, 1)}</span>)}</div>
-      {viewer ? <span className="tv-sync" role="status">{state.connection === 'online' ? '实时同步' : '等待同步'}</span> : null}
-      <span className={`connection ${state.connection}`} role="status"><i/>{status}</span>
-      <span className="header-divider"/>
+    <div className={viewer ? "collaboration tv-header" : "collaboration panel"}>
+      {!viewer ? <div className="avatars" aria-label={`${state.members.length} 台设备在线`}>{state.members.slice(0, 3).map(member => <span key={member.id} title={`${member.name}${member.role === 'viewer' ? ' · 观看' : ''}`} style={{ backgroundColor: member.color }}>{member.role === 'viewer' ? <Monitor size={17}/> : member.name.slice(0, 1)}</span>)}</div> : null}
+      {viewer ? <span className="tv-sync tv-header-item" role="status">{state.connection === 'online' ? '实时同步' : '等待同步'}</span> : null}
+      <span className={`connection ${state.connection} ${viewer ? 'tv-header-item' : ''}`} role="status"><i/>{status}</span>
+      {!viewer ? <span className="header-divider"/> : null}
       {!viewer && state.connection === 'online' ? <a aria-label="电视视图" className="secondary tv-link" href={roomLink(session.credentials, true)} target="_blank" rel="noreferrer"><Monitor size={19}/><span>电视视图</span></a> : null}
       {!viewer && state.host ? <button className="secondary manage-button" onClick={() => setManage(true)}>管理</button> : null}
-      {viewer ? <><button data-tv-row="header" className="secondary" onClick={() => setManage(true)}>管理成员</button><button data-tv-row="header" className="secondary" onClick={openTVMenu}>设置</button></> : null}
+      {viewer ? <><button data-tv-row="header" className="secondary tv-header-item" onClick={() => setManage(true)}>管理成员</button><button data-tv-row="header" className="secondary tv-header-item" onClick={openTVMenu}>设置</button></> : null}
       {!viewer ? <button disabled={state.connection !== 'online' || !state.access || state.access.paused || state.access.ended} className="primary invite-button" onClick={() => setInvite(true)}><UserPlus size={19}/><span>{state.access?.paused ? '加入已暂停' : '邀请加入'}</span></button> : null}
     </div>
     {viewer && state.access && state.connection === 'online' ? <TVJoinCard access={state.access} credentials={session.credentials} hidden={joinHidden} onToggle={() => setJoinHidden(!joinHidden)}/> : null}
@@ -129,7 +129,7 @@ export function Board({ session }: { session: BoardSession }) {
 
       {!viewer ? <span>{`${Math.round(camera.zoom * 100)}%`}</span> : null}
       {!viewer ? <button className="icon-button" aria-label="放大" onClick={() => engine.current?.zoom(1.25)}><Plus size={20}/></button> : null}
-      <span className="zoom-divider"/><button data-tv-row={viewer ? "view" : undefined} className={viewer ? "secondary view-button" : "icon-button"} aria-pressed={viewer ? !focus && viewMode === 'content' : undefined} aria-label="显示全部内容" title="显示全部内容 (F)" onFocus={viewer ? () => chooseView('content') : undefined} onClick={() => chooseView('content')}>{viewer ? '显示全部内容' : <Scan size={21}/>}</button>
+      {!viewer ? <span className="zoom-divider"/> : null}<button data-tv-row={viewer ? "view" : undefined} className={viewer ? "secondary view-button" : "icon-button"} aria-pressed={viewer ? !focus && viewMode === 'content' : undefined} aria-label="显示全部内容" title="显示全部内容 (F)" onFocus={viewer ? () => chooseView('content') : undefined} onClick={() => chooseView('content')}>{viewer ? '显示全部内容' : <Scan size={21}/>}</button>
     </div>
     {uploading ? <div className="tool-hint" role="status">正在压缩并上传图片…</div> : null}
     {imageError ? <div className="image-notice panel" role="alert"><span>{imageError}</span><button className="secondary" onClick={() => setImageError('')}>关闭</button></div> : null}
