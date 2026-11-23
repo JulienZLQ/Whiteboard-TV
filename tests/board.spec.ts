@@ -247,3 +247,36 @@ test('phone note creation and remote deletion while editing keep the draft copya
   await mobile.getByRole('button', { name: '取消', exact: true }).click(); await expect(mobile.getByTestId('canvas')).toHaveAttribute('data-object-count', '0');
   await mobileContext.close();
 });
+
+test('legacy TV creates a room, receives phone previews and restores through reload', async ({ browser, page }) => {
+  let invite = '';
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  page.on('websocket', ws => ws.on('framereceived', event => {
+    const message = JSON.parse(event.payload.toString());
+    if (message.type === 'ready') invite = `${new URL(page.url()).origin}/?room=${new URL(page.url()).searchParams.get('room')}#token=${message.access.inviteToken}`;
+  }));
+  await page.goto('/legacy-tv.html?mode=tv&tvShell=android');
+  await expect(page.getByRole('button', { name: '创建电视白板' })).toBeFocused();
+  await page.evaluate(() => window.WhiteboardTV!.key('Enter'));
+  await expect(page.getByAltText('电视编辑加入二维码')).toBeVisible();
+  await expect.poll(() => invite).toContain('#token=');
+  const editor = await browser.newPage({ viewport: { width: 1024, height: 768 } });
+  await editor.goto(invite); await editor.getByPlaceholder('怎么称呼你？').fill('兼容测试'); await editor.getByRole('button', { name: '加入白板', exact: true }).click();
+  await editor.getByRole('button', { name: '添加便签', exact: true }).click(); await editor.mouse.click(350, 280);
+  await editor.getByLabel('内容', { exact: true }).fill('电视实时呈现中文便签');
+  await expect(page.locator('#board')).toHaveAttribute('data-object-preview-count', '1');
+  await editor.getByRole('button', { name: '保存内容' }).click();
+  await expect(page.locator('#board')).toHaveAttribute('data-object-count', '1');
+  await editor.getByRole('button', { name: '画笔', exact: true }).click();
+  await editor.mouse.move(400, 560); await editor.mouse.down(); await editor.mouse.move(650, 560, { steps: 10 });
+  await expect(page.locator('#board')).toHaveAttribute('data-preview-count', '1'); await editor.mouse.up();
+  await expect(page.locator('#board')).toHaveAttribute('data-stroke-count', '1');
+  await page.getByRole('button', { name: '手机管理', exact: true }).click();
+  await expect(page.getByAltText('手机主持认领二维码')).toBeVisible();
+  await page.evaluate(() => window.WhiteboardTV!.back());
+  await expect(page.getByAltText('电视编辑加入二维码')).toBeVisible();
+  await page.reload(); await expect(page.locator('#board')).toHaveAttribute('data-object-count', '1');
+  await expect(page.locator('#board')).toHaveAttribute('data-stroke-count', '1');
+  await expect(page.getByText('实时连接', { exact: true })).toBeVisible();
+  expect(errors).toEqual([]); await editor.close();
+});

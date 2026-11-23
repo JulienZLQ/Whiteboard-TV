@@ -7,7 +7,7 @@ import * as Y from 'yjs';
 import { COLORS, LIMITS, OBJECT_LIMITS, validId, validObject, validObjectPatch, validPoint, validStroke, type BoardObject, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
 import { RoomStore, secret, type Room } from './store';
 
-type Peer = { room: Room; member: Member; token: string; previewSeq: number; objectSeq: number; alive: boolean };
+type Peer = { legacyTV: boolean; snapshotTimer?: ReturnType<typeof setTimeout>; room: Room; member: Member; token: string; previewSeq: number; objectSeq: number; alive: boolean };
 const matches = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 
@@ -51,6 +51,16 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
   function send(ws: WebSocket, message: ServerMessage) {
     if (ws.readyState !== WebSocket.OPEN) return;
     if (ws.bufferedAmount > 2 * 1024 * 1024) { ws.close(1013, 'Slow client'); return; }
+    const peer = peers.get(ws);
+    if (peer?.legacyTV && (message.type === 'ready' || message.type === 'update')) {
+      const snapshot = () => ({ strokes: [...peer.room.doc.getMap<Stroke>('strokes').values()], objects: [...peer.room.doc.getMap<BoardObject>('objects').values()], deletedObjectIds: [...peer.room.doc.getMap('deletedObjects').keys()], deletedStrokeIds: [...peer.room.doc.getMap('deleted').keys()] });
+      if (message.type === 'ready') ws.send(JSON.stringify({ ...message, update: '', snapshot: snapshot() }));
+      else if (!peer.snapshotTimer) peer.snapshotTimer = setTimeout(() => {
+        peer.snapshotTimer = undefined;
+        if (peers.get(ws) === peer) send(ws, { type: 'snapshot', ...snapshot() });
+      }, 100);
+      return;
+    }
     ws.send(JSON.stringify(message));
   }
   function members(room: Room) { return [...peers.values()].filter(p => p.room === room).map(p => p.member); }
@@ -94,9 +104,9 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
             }
             if (ws.readyState !== WebSocket.OPEN) return;
             if (!role) { ws.close(1008, 'Invalid credentials'); return; }
-            if (hello.viewOnly) role = 'viewer';
+            if (hello.viewOnly || hello.legacyTV) role = 'viewer';
             const member: Member = { id: randomBytes(8).toString('hex'), name: hello.name.replace(/[\u0000-\u001f]/g, '').slice(0, 20) || '访客', color: COLORS[members(room).length % COLORS.length], role, host, cursor: null };
-            peers.set(ws, { room, member, token, previewSeq: -1, objectSeq: -1, alive: true }); clearTimeout(deadline);
+            peers.set(ws, { legacyTV: hello.legacyTV === true, room, member, token, previewSeq: -1, objectSeq: -1, alive: true }); clearTimeout(deadline);
             send(ws, { type: 'ready', memberId: member.id, token, host, role, access: access(room, host), viewerToken: room.viewerToken, update: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString('base64'), members: members(room) });
             publishMembers(room); publishAccess(room);
           }).catch(() => ws.close(1008, 'Room unavailable'));
@@ -126,7 +136,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
           try { await store.save(room, room.doc); } catch (e) { room.access = previous; throw e; }
           publishAccess(room);
           for (const [socket, p] of peers) if (p.room === room && (next.ended || (removed && p.token === removed.token))) {
-            peers.delete(socket); socket.close(1008, next.ended ? 'Session ended' : 'Removed by host');
+            clearTimeout(p.snapshotTimer); peers.delete(socket); socket.close(1008, next.ended ? 'Session ended' : 'Removed by host');
             broadcast(room, { type: 'preview', memberId: p.member.id, stroke: null });
             broadcast(room, { type: 'object-preview', memberId: p.member.id, object: null });
           }
@@ -214,7 +224,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
     ws.on('close', () => {
       clearTimeout(deadline);
       const peer = peers.get(ws); peers.delete(ws);
-      if (peer) { broadcast(peer.room, { type: 'object-preview', memberId: peer.member.id, object: null }); publishMembers(peer.room); broadcast(peer.room, { type: 'preview', memberId: peer.member.id, stroke: null }); }
+      if (peer) { clearTimeout(peer.snapshotTimer); broadcast(peer.room, { type: 'object-preview', memberId: peer.member.id, object: null }); publishMembers(peer.room); broadcast(peer.room, { type: 'preview', memberId: peer.member.id, stroke: null }); }
     });
   });
   const heartbeat = setInterval(() => {

@@ -23,4 +23,10 @@ public class ServerAddressTest {
         assertEquals(base + "/?room=" + id + "&mode=tv&tvShell=android", ServerAddress.resumeUrl(base, base + "/?room=" + id + "&mode=tv&ignored=1"));
         for (String url : new String[]{base + "/?room=" + id + "#token=x", "https://evil/?room=" + id, base + "/login?room=" + id}) assertEquals(ServerAddress.startUrl(base), ServerAddress.resumeUrl(base, url));
     }
+    @Test public void legacyRoutePreservesOnlyTheRoomAndSameOrigin() {
+        String base = "http://192.168.1.20:8787", id = "0123456789abcdef01234567";
+        assertEquals(base + "/legacy-tv.html?room=" + id + "&mode=tv&tvShell=android", ServerAddress.legacyUrl(base, base + "/?room=" + id));
+        assertEquals(base + "/?room=" + id + "&mode=tv&tvShell=android", ServerAddress.resumeUrl(base, base + "/legacy-tv.html?room=" + id));
+        assertEquals(base + "/legacy-tv.html?mode=tv&tvShell=android", ServerAddress.legacyUrl(base, "https://evil/?room=" + id));
+    }
 }

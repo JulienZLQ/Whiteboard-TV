@@ -131,6 +131,7 @@ public final class MainActivity extends Activity {
     private void openBoard(String url) {
         requestVersion++;
         if (web != null) { root.removeView(web); web.destroy(); }
+        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) WebView.setWebContentsDebuggingEnabled(true);
         web = new WebView(this); root.addView(web,0,new FrameLayout.LayoutParams(-1,-1));
         WebSettings settings = web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
@@ -162,7 +163,11 @@ public final class MainActivity extends Activity {
         web.setDownloadListener((a,b,c,d,e) -> Toast.makeText(this,"请在手机或 Pad 导出白板副本",Toast.LENGTH_LONG).show());
         PackageInfo info = WebView.getCurrentWebViewPackage();
         if (info != null) {
-            try { if (Integer.parseInt(info.versionName.split("\\.")[0]) < 110) { showFailure("请将 Android System WebView 更新到 110 或更新版本，再打开白板。"); return; } } catch (NumberFormatException ignored) { }
+            try {
+                int major = Integer.parseInt(info.versionName.split("\\.")[0]);
+                if (major < 66) { showFailure("电视浏览组件版本过旧，请更新 Android System WebView 后重试。"); return; }
+                if (major < 110) url = ServerAddress.legacyUrl(origin, url);
+            } catch (NumberFormatException ignored) { }
         }
         LinearLayout loading = panel(); loading.setTag("loading"); loading.addView(text("正在打开共创白板…",28,Color.rgb(23,32,51)));
         loading.addView(button("服务地址设置",this::showSettings));

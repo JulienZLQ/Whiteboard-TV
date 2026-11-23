@@ -99,15 +99,17 @@ export type ClientMessage =
   | ObjectMutation
   | { type: 'object-preview'; object: BoardObject | null; seq: number }
   | { type: 'manage'; action: 'pause' | 'resume' | 'rotate' | 'remove' | 'end'; memberId?: string }
-  | { type: 'hello'; protocolVersion: 1; roomId: string; token: string; name: string; viewOnly?: boolean }
+  | { type: 'hello'; protocolVersion: 1; roomId: string; token: string; name: string; viewOnly?: boolean; legacyTV?: boolean }
   | { type: 'presence'; cursor: Point | null }
   | { type: 'preview'; stroke: Stroke | null; seq: number }
   | { type: 'commit'; stroke: Stroke; mutationId: string }
   | { type: 'delete'; strokeId: string; mutationId: string };
+export type BoardSnapshot = { strokes: Stroke[]; objects: BoardObject[]; deletedObjectIds?: string[]; deletedStrokeIds?: string[] };
 export type ServerMessage =
+  | ({ type: 'snapshot' } & BoardSnapshot)
   | { type: 'object-preview'; memberId: string; object: BoardObject | null }
   | { type: 'access'; access: AccessState }
-  | { type: 'ready'; token?: string; host?: boolean; access?: AccessState; memberId: string; role: Member['role']; viewerToken: string; update: string; members: Member[] }
+  | { type: 'ready'; snapshot?: BoardSnapshot; token?: string; host?: boolean; access?: AccessState; memberId: string; role: Member['role']; viewerToken: string; update: string; members: Member[] }
   | { type: 'members'; members: Member[] }
   | { type: 'presence'; member: Member }
   | { type: 'preview'; memberId: string; stroke: Stroke | null }

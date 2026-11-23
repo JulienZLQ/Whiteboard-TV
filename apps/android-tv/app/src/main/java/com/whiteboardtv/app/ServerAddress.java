@@ -34,11 +34,15 @@ public final class ServerAddress {
         } catch (Exception e) { return false; }
     }
     public static String startUrl(String origin) { return origin + "/?mode=tv&tvShell=android"; }
+    public static String legacyUrl(String origin, String value) {
+        String safe = resumeUrl(origin, value);
+        return origin + "/legacy-tv.html" + safe.substring(origin.length() + 1);
+    }
     public static String resumeUrl(String origin, String value) {
         if (!sameOrigin(origin, value)) return startUrl(origin);
         try {
             URI uri = new URI(value);
-            if (!"/".equals(uri.getPath()) || uri.getRawFragment() != null) return startUrl(origin);
+            if ((!"/".equals(uri.getPath()) && !"/legacy-tv.html".equals(uri.getPath())) || uri.getRawFragment() != null) return startUrl(origin);
             String room = null;
             for (String pair : (uri.getRawQuery() == null ? "" : uri.getRawQuery()).split("&")) {
                 if (pair.matches("room=[a-f0-9]{24}")) room = pair.substring(5);

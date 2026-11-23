@@ -71,3 +71,7 @@ UUID 或等价随机 ID；不使用数组下标作为对象身份。对象按 ID
 ## M3 文字与便签实现补充
 
 新增 objects、deletedObjects、objectMutations 三个 Y.Map；对象更新区分 text 与 x/y，不接受任意字段补丁。临时对象预览与最终命令分离；导出 schemaVersion 升至 2，持久快照容器仍为 1。具体并发语义、命令、限制和兼容要求见 [文字与便签](11-text-notes.md)。
+
+## 旧电视接收协议
+
+hello.legacyTV=true 强制 viewer。ready.snapshot 和 snapshot 消息包含 strokes、objects、deletedStrokeIds、deletedObjectIds；不向兼容客户端发送 Yjs update。持久变更按连接合并为约 100ms 一次完整快照，过程预览和成员通道仍实时发送。主编辑器协议不变。

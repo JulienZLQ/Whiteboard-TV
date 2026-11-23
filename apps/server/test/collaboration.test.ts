@@ -8,12 +8,12 @@ import * as Y from 'yjs';
 import type { ClientMessage, Credentials, ServerMessage, Stroke } from '@whiteboard/board-core';
 import { createWhiteboardServer } from '../src/server';
 
-async function client(port: number, credentials: Credentials, name: string) {
+async function client(port: number, credentials: Credentials, name: string, legacyTV = false) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`), doc = new Y.Doc();
   const inbox: ServerMessage[] = [];
   ws.on('message', raw => {
     const message: ServerMessage = JSON.parse(raw.toString()); inbox.push(message);
-    if (message.type === 'ready' || message.type === 'update') Y.applyUpdate(doc, Buffer.from(message.update, 'base64'));
+    if ((message.type === 'ready' || message.type === 'update') && message.update) Y.applyUpdate(doc, Buffer.from(message.update, 'base64'));
   });
   const wait = async <T extends ServerMessage['type']>(type: T, predicate?: (m: Extract<ServerMessage, { type: T }>) => boolean) => {
     const start = Date.now();
@@ -25,7 +25,7 @@ async function client(port: number, credentials: Credentials, name: string) {
     throw new Error('Timed out waiting for ' + type);
   };
   await new Promise<void>(resolve => ws.on('open', resolve));
-  ws.send(JSON.stringify({ type: 'hello', protocolVersion: 1, roomId: credentials.roomId, token: credentials.token, name }));
+  ws.send(JSON.stringify({ type: 'hello', protocolVersion: 1, roomId: credentials.roomId, token: credentials.token, name, legacyTV }));
   const ready = await wait('ready');
   return { ready, ws, doc, wait, inbox, send: (message: ClientMessage) => ws.send(JSON.stringify(message)) };
 }
@@ -169,5 +169,24 @@ test('text objects: previews, field-wise updates, retry deduplication, delete wi
     assert.equal(restored.doc.getMap('objects').has('object-text-02'), true);
     assert.equal(restored.doc.getMap('deletedObjects').has(object.id), true);
     assert.equal(restored.doc.getMap('objectMutations').has(move.mutationId), true);
+  } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('legacy TV receives snapshots and previews with forced viewer permissions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'whiteboard-legacy-'));
+  const app = createWhiteboardServer({ dataDir: directory }), port = await app.listen(0);
+  const clients: Awaited<ReturnType<typeof client>>[] = [];
+  try {
+    const room = await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    const editor = await client(port, room, 'Editor'), tv = await client(port, room, 'Legacy', true); clients.push(editor, tv);
+    assert.equal(tv.ready.role, 'viewer'); assert.equal(tv.ready.update, ''); assert.deepEqual(tv.ready.snapshot?.strokes, []);
+    tv.send({ type: 'commit', stroke, mutationId: 'legacy-write-denied' }); assert.match((await tv.wait('error')).message, /仅可观看/);
+    const object = { id: 'legacy-note-01', kind: 'note' as const, x: 100, y: 100, text: '旧电视同步', color: '#315EFB' };
+    editor.send({ type: 'object-preview', object, seq: 1 }); assert.equal((await tv.wait('object-preview', m => !!m.object)).object?.text, object.text);
+    editor.send({ type: 'commit', stroke, mutationId: 'legacy-stroke-save' }); await editor.wait('saved');
+    editor.send({ type: 'create-object', object, mutationId: 'legacy-note-save' }); await editor.wait('saved');
+    const saved = await tv.wait('snapshot', m => m.objects.length === 1); assert.equal(saved.strokes.length, 1);
+    editor.send({ type: 'delete-object', objectId: object.id, mutationId: 'legacy-note-delete' }); await editor.wait('saved');
+    const deleted = await tv.wait('snapshot', m => m.objects.length === 0); assert.ok(deleted.deletedObjectIds?.includes(object.id));
   } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
