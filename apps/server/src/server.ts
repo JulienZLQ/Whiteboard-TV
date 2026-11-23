@@ -1,0 +1,157 @@
+import { createServer } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { resolve, extname, sep } from 'node:path';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { WebSocketServer, WebSocket } from 'ws';
+import * as Y from 'yjs';
+import { COLORS, LIMITS, validPoint, validStroke, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
+import { RoomStore, type Room } from './store';
+
+type Peer = { room: Room; member: Member; previewSeq: number; alive: boolean };
+const matches = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
+
+export function createWhiteboardServer(options: { dataDir: string; webRoot?: string }) {
+  const store = new RoomStore(options.dataDir);
+  const peers = new Map<WebSocket, Peer>();
+  let creating = 0;
+  const server = createServer(async (req, res) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M1"}'); return; }
+    if (url.pathname === '/api/rooms' && req.method === 'POST') {
+      // JSON/custom-header requirement blocks ordinary cross-origin forms; no CORS is enabled.
+      if (req.headers['x-whiteboard-client'] !== '1' || creating >= 4) { res.writeHead(403).end(); return; }
+      creating++;
+      try {
+        const room = await store.create();
+        res.setHeader('Cache-Control', 'no-store'); res.setHeader('Content-Type', 'application/json');
+        res.writeHead(201).end(JSON.stringify({ roomId: room.id, token: room.editorToken, viewerToken: room.viewerToken, role: 'editor' }));
+      } catch { res.writeHead(503).end(JSON.stringify({ error: '无法创建房间，请稍后重试' })); }
+      finally { creating--; }
+      return;
+    }
+    if (url.pathname.startsWith('/api/')) { res.writeHead(404).end(); return; }
+    if (!options.webRoot || (req.method !== 'GET' && req.method !== 'HEAD')) { res.writeHead(404).end(); return; }
+    try {
+      const root = resolve(options.webRoot);
+      const path = resolve(root, '.' + decodeURIComponent(url.pathname));
+      if (path !== root && !path.startsWith(root + sep)) { res.writeHead(403).end(); return; }
+      const file = await stat(path).then(s => s.isFile() ? path : resolve(root, 'index.html')).catch(() => extname(path) ? '' : resolve(root, 'index.html'));
+      if (!file) { res.writeHead(404).end(); return; }
+      const body = await readFile(file);
+      res.setHeader('Content-Type', mime[extname(file)] ?? 'application/octet-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.end(req.method === 'HEAD' ? undefined : body);
+    } catch { res.writeHead(404).end(); }
+  });
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 });
+  wss.on('error', () => { /* HTTP listen failures are reported by listen(). */ });
+  function send(ws: WebSocket, message: ServerMessage) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.bufferedAmount > 2 * 1024 * 1024) { ws.close(1013, 'Slow client'); return; }
+    ws.send(JSON.stringify(message));
+  }
+  function members(room: Room) { return [...peers.values()].filter(p => p.room === room).map(p => p.member); }
+  function broadcast(room: Room, message: ServerMessage, except?: WebSocket) {
+    for (const [socket, peer] of peers) if (peer.room === room && socket !== except) send(socket, message);
+  }
+  function publishMembers(room: Room) { broadcast(room, { type: 'members', members: members(room) }); }
+  wss.on('connection', ws => {
+    let authenticating = false, count = 0, period = Date.now();
+    const deadline = setTimeout(() => { if (!peers.has(ws)) ws.close(1008, 'Authentication required'); }, 5000);
+    ws.on('error', () => {});
+    ws.on('pong', () => { const peer = peers.get(ws); if (peer) peer.alive = true; });
+    ws.on('message', raw => {
+      if (Date.now() - period > 1000) { count = 0; period = Date.now(); }
+      if (++count > 100) { ws.close(1008, 'Rate limit'); return; }
+      let message: ClientMessage;
+      try { message = JSON.parse(raw.toString()); if (!message || typeof message !== 'object') throw new Error(); }
+      catch { send(ws, { type: 'error', message: '消息格式错误' }); return; }
+      const peer = peers.get(ws);
+      if (!peer) {
+        if (authenticating || message.type !== 'hello') return;
+        const hello = message;
+        if (hello.protocolVersion !== 1 || typeof hello.token !== 'string' || !/^[a-f0-9]{64}$/.test(hello.token) || typeof hello.name !== 'string') { ws.close(1008, 'Invalid credentials'); return; }
+        authenticating = true;
+        void store.get(hello.roomId).then(room => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          const role = matches(hello.token, room.editorToken) ? 'editor' : matches(hello.token, room.viewerToken) ? 'viewer' : null;
+          if (!role || members(room).length >= 32) { ws.close(1008, 'Invalid credentials or room full'); return; }
+          const member: Member = { id: randomBytes(8).toString('hex'), name: hello.name.replace(/[\u0000-\u001f]/g, '').slice(0, 20) || '访客', color: COLORS[members(room).length % COLORS.length], role, cursor: null };
+          peers.set(ws, { room, member, previewSeq: -1, alive: true }); clearTimeout(deadline);
+          send(ws, { type: 'ready', memberId: member.id, role, viewerToken: room.viewerToken, update: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString('base64'), members: members(room) });
+          publishMembers(room);
+        }).catch(() => ws.close(1008, 'Room unavailable'));
+        return;
+      }
+      if (message.type === 'presence') {
+        if (message.cursor !== null && !validPoint(message.cursor)) return;
+        peer.member.cursor = message.cursor;
+        broadcast(peer.room, { type: 'presence', member: peer.member }, ws);
+      } else if (message.type === 'preview') {
+        if (peer.member.role !== 'editor' || !Number.isSafeInteger(message.seq) || message.seq <= peer.previewSeq || (message.stroke !== null && !validStroke(message.stroke))) return;
+        peer.previewSeq = message.seq;
+        broadcast(peer.room, { type: 'preview', memberId: peer.member.id, stroke: message.stroke }, ws);
+      } else if (message.type === 'commit' || message.type === 'delete') {
+        const operation = message;
+        if (typeof operation.mutationId !== 'string' || !/^[a-zA-Z0-9_-]{8,80}$/.test(operation.mutationId)) return;
+        if (peer.member.role !== 'editor') { send(ws, { type: 'error', message: '电视凭证仅可观看', mutationId: operation.mutationId }); return; }
+        if ((operation.type === 'commit' && !validStroke(operation.stroke)) || (operation.type === 'delete' && (typeof operation.strokeId !== 'string' || !/^[a-zA-Z0-9_-]{8,80}$/.test(operation.strokeId)))) {
+          send(ws, { type: 'error', message: '笔迹超出支持范围', mutationId: operation.mutationId }); return;
+        }
+        peer.room.queue = peer.room.queue.then(async () => {
+          const room = peer.room, candidate = new Y.Doc();
+          try {
+            Y.applyUpdate(candidate, Y.encodeStateAsUpdate(room.doc));
+            const strokes = candidate.getMap<Stroke>('strokes'), deleted = candidate.getMap<boolean>('deleted');
+            if (operation.type === 'commit') {
+              if (!deleted.has(operation.stroke.id) && !strokes.has(operation.stroke.id)) {
+                let points = operation.stroke.points.length / 2;
+                for (const s of strokes.values()) points += s.points.length / 2;
+                if (strokes.size >= LIMITS.strokes || points > LIMITS.pointsPerRoom) throw new Error('白板容量已达实验版本上限');
+                strokes.set(operation.stroke.id, operation.stroke);
+              }
+            } else {
+              if (deleted.size >= 10_000) throw new Error('操作数量已达实验版本上限');
+              deleted.set(operation.strokeId, true); strokes.delete(operation.strokeId);
+            }
+            await store.save(room, candidate);
+            const update = Y.encodeStateAsUpdate(candidate, Y.encodeStateVector(room.doc));
+            Y.applyUpdate(room.doc, update);
+            broadcast(room, { type: 'update', update: Buffer.from(update).toString('base64') });
+            broadcast(room, { type: 'preview', memberId: peer.member.id, stroke: null });
+            send(ws, { type: 'saved', mutationId: operation.mutationId });
+          } finally { candidate.destroy(); }
+        }).catch(error => send(ws, { type: 'error', mutationId: operation.mutationId, message: error.message?.includes('上限') ? error.message : '保存失败，请重试；本地笔迹仍保留' }));
+      }
+    });
+    ws.on('close', () => {
+      clearTimeout(deadline);
+      const peer = peers.get(ws); peers.delete(ws);
+      if (peer) { publishMembers(peer.room); broadcast(peer.room, { type: 'preview', memberId: peer.member.id, stroke: null }); }
+    });
+  });
+  const heartbeat = setInterval(() => {
+    for (const [socket, peer] of peers) {
+      if (!peer.alive) socket.terminate();
+      else { peer.alive = false; socket.ping(); }
+    }
+  }, 15_000);
+  heartbeat.unref();
+  return {
+    server, store,
+    listen: (port = 8787, host = '127.0.0.1') => new Promise<number>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, () => { server.off('error', reject); resolve((server.address() as { port: number }).port); });
+    }),
+    close: async () => {
+      clearInterval(heartbeat);
+      for (const ws of wss.clients) ws.terminate();
+      await new Promise<void>(resolve => wss.close(() => resolve()));
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      await store.close();
+    },
+  };
+}
