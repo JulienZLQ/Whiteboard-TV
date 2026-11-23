@@ -1,10 +1,10 @@
 import { saveCredentials } from './tv';
 import * as Y from 'yjs';
-import { patchObject, resolveObject, LIMITS, type BoardObject, type ObjectPatch, type ObjectMutation, type ObjectPreview, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
+import { orderedItems, patchObject, resolveObject, LIMITS, type BoardObject, type ObjectPatch, type ObjectMutation, type ObjectPreview, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 
 export function newId() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''); }
-type Mutation = Extract<ClientMessage, { type: 'commit' | 'delete' }> | ObjectMutation;
-export type SessionState = { host: boolean; access?: AccessState; connection: 'connecting' | 'online' | 'offline' | 'denied'; pending: number; error: string; members: Member[]; memberId: string };
+type Mutation = Extract<ClientMessage, { type: 'commit' | 'delete' | 'history' }> | ObjectMutation;
+export type SessionState = { undo: number; redo: number; notice: string; host: boolean; access?: AccessState; connection: 'connecting' | 'online' | 'offline' | 'denied'; pending: number; error: string; members: Member[]; memberId: string };
 const decode = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0));
 
 export class BoardSession {
@@ -27,7 +27,7 @@ export class BoardSession {
   private lastPresence = 0;
   private lastPreview = 0;
   private queueKey: string;
-  private state: SessionState = { host: false, connection: 'connecting', pending: 0, error: '', members: [], memberId: '' };
+  private state: SessionState = { undo: 0, redo: 0, notice: '', host: false, connection: 'connecting', pending: 0, error: '', members: [], memberId: '' };
   constructor(readonly credentials: Credentials, readonly name: string) {
     this.queueKey = `whiteboard.pending.${credentials.roomId}`;
     try {
@@ -82,6 +82,8 @@ export class BoardSession {
         this.publish({ connection: 'online', host: !!message.host, access: message.access, memberId: message.memberId, members: message.members, error: '' });
         this.inFlight.clear(); this.flush();
         this.redraw();
+      } else if (message.type === 'history-state') {
+        this.publish(message.history);
       } else if (message.type === 'access') {
         this.publish({ access: message.access });
       } else if (message.type === 'members') {
@@ -100,7 +102,7 @@ export class BoardSession {
       } else if (message.type === 'update') {
         Y.applyUpdate(this.doc, decode(message.update));
       } else if (message.type === 'saved') {
-        this.pending.delete(message.mutationId); this.inFlight.delete(message.mutationId); this.persistQueue(); this.publish({ error: '' }); this.redraw(); this.flush();
+        this.pending.delete(message.mutationId); this.inFlight.delete(message.mutationId); this.persistQueue(); this.publish({ error: '', notice: message.notice || '' }); this.redraw(); this.flush();
       } else if (message.type === 'error') {
         this.publish({ error: message.message });
       }
@@ -122,7 +124,7 @@ export class BoardSession {
       if (operation.type === 'commit' && !deleted.has(operation.stroke.id)) strokes.set(operation.stroke.id, operation.stroke);
       if (operation.type === 'delete') strokes.delete(operation.strokeId);
     }
-    return [...strokes.values()];
+    return orderedItems([...strokes.values()], id => this.doc.getMap<number>('renderOrder').get('strokes:' + id) ?? (this.doc.getMap('strokes').has(id) ? 0 : Number.MAX_SAFE_INTEGER));
   }
   getPreviews() { return [...this.previews.values()].filter(p => !this.doc.getMap('strokes').has(p.stroke.id) && !this.doc.getMap('deleted').has(p.stroke.id)); }
   getObjects(): BoardObject[] {
@@ -141,7 +143,7 @@ export class BoardSession {
         objects.delete(operation.objectId);
       }
     }
-    return [...objects.values()];
+    return orderedItems([...objects.values()], id => this.doc.getMap<number>('renderOrder').get('objects:' + id) ?? (this.doc.getMap('objects').has(id) ? 0 : Number.MAX_SAFE_INTEGER));
   }
   getObjectPreviews() { return [...this.objectPreviews.values()].filter(p => !this.doc.getMap('deletedObjects').has(p.object.id)); }
   createObject(object: BoardObject) { this.mutate({ type: 'create-object', object, mutationId: newId() }); }
@@ -161,6 +163,8 @@ export class BoardSession {
     this.pending.set(operation.mutationId, operation); this.persistQueue(); this.publish(); this.redraw();
     this.flush();
   }
+  history(direction: 'undo' | 'redo') { if (this.state.connection === 'online' && !this.pending.size && this.state[direction]) this.mutate({ type: 'history', direction, mutationId: newId() }); }
+  dismissNotice = () => this.publish({ notice: '' });
   commit(stroke: Stroke) { this.mutate({ type: 'commit', stroke: { ...stroke, points: [...stroke.points] }, mutationId: newId() }); }
   erase(strokeId: string) { this.mutate({ type: 'delete', strokeId, mutationId: newId() }); }
   private flush() {

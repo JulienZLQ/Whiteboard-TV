@@ -123,6 +123,7 @@ export type ObjectMutation =
   | { type: 'delete-object'; objectId: string; mutationId: string };
 export type ClientMessage =
   | ObjectMutation
+  | { type: 'history'; direction: 'undo' | 'redo'; mutationId: string }
   | { type: 'object-preview'; object: BoardObject | null; seq: number }
   | { type: 'manage'; action: 'pause' | 'resume' | 'rotate' | 'remove' | 'end'; memberId?: string }
   | { type: 'hello'; protocolVersion: 1; roomId: string; token: string; name: string; viewOnly?: boolean; legacyTV?: boolean }
@@ -131,7 +132,9 @@ export type ClientMessage =
   | { type: 'commit'; stroke: Stroke; mutationId: string }
   | { type: 'delete'; strokeId: string; mutationId: string };
 export type BoardSnapshot = { strokes: Stroke[]; objects: BoardObject[]; deletedObjectIds?: string[]; deletedStrokeIds?: string[] };
+export type HistoryState = { undo: number; redo: number };
 export type ServerMessage =
+  | { type: 'history-state'; history: HistoryState }
   | ({ type: 'snapshot' } & BoardSnapshot)
   | { type: 'object-preview'; memberId: string; object: BoardObject | null }
   | { type: 'access'; access: AccessState }
@@ -140,7 +143,7 @@ export type ServerMessage =
   | { type: 'presence'; member: Member }
   | { type: 'preview'; memberId: string; stroke: Stroke | null }
   | { type: 'update'; update: string }
-  | { type: 'saved'; mutationId: string }
+  | { type: 'saved'; mutationId: string; notice?: string }
   | { type: 'error'; message: string; mutationId?: string };
 
 // A stable, tiled canvas extent is distinct from fitting just the document's marks.
@@ -197,4 +200,16 @@ export function patchObject(current: BoardObject, patch: ObjectPatch): BoardObje
 export function normalizeConnector(o: ConnectorObject, objects: BoardObject[]): ConnectorObject {
   const target = (id: string | null) => objects.some(target => target.id === id && target.kind !== 'connector') ? id : null;
   return { ...o, fromId: target(o.fromId), toId: target(o.toId) };
+}
+
+// Exact rectangular fit, including very small marks; caller owns UI obstruction bounds.
+export function fitBounds(bounds: { left: number; top: number; right: number; bottom: number }, size: Size): Camera {
+  const width = Math.max(.01, bounds.right - bounds.left), height = Math.max(.01, bounds.bottom - bounds.top);
+  const zoom = Math.min(Math.max(1, size.width) / width, Math.max(1, size.height) / height);
+  return { zoom, x: size.width / 2 - (bounds.left + width / 2) * zoom, y: size.height / 2 - (bounds.top + height / 2) * zoom };
+}
+
+// Y.Map iteration is not a portable z-order across independently hydrated clients.
+export function orderedItems<T extends { id: string }>(items: T[], order: (id: string) => number | undefined): T[] {
+  return items.sort((a, b) => (order(a.id) ?? 0) - (order(b.id) ?? 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }

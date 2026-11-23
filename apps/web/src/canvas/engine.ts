@@ -1,3 +1,5 @@
+import { objectNode } from './object-node';
+import { fitTVContent } from '../tv-layout';
 import Konva from 'konva';
 import { fitCamera, hitObject, objectBounds, resolveObject, isTextObject, isResizable, validObject, canvasBounds, DEFAULT_CANVAS, contentBounds, contentFrame, objectLayout, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke, type BoardObject, type TextObject, type ImageObject, type ShapeObject, type ConnectorObject } from '@whiteboard/board-core';
 import { ImageCache } from '../images';
@@ -201,34 +203,7 @@ export class BoardEngine {
     if (object && isTextObject(object)) this.onEdit(object);
   };
   select(id: string) { if (id !== this.selected) { this.selected = id; this.onSelection(id); this.schedule(); } }
-  private objectNode(object: BoardObject, draft = false) {
-    object = resolveObject(object, this.renderObjects);
-    const layout = objectLayout(object), node = new Konva.Group({ x: object.x, y: object.y, opacity: draft ? .82 : 1 });
-    if (object.kind === 'shape') {
-      const common = { stroke: object.color, strokeWidth: 3, fill: object.color + '12' };
-      if (object.shape === 'ellipse') node.add(new Konva.Ellipse({ ...common, x: object.width / 2, y: object.height / 2, radiusX: object.width / 2, radiusY: object.height / 2 }));
-      else node.add(new Konva.Rect({ ...common, width: object.width, height: object.height, cornerRadius: 12 }));
-      return node;
-    }
-    if (object.kind === 'connector') {
-      const attrs = { points: [0, 0, object.dx, object.dy], stroke: object.color, fill: object.color, strokeWidth: 3, lineCap: 'round' as const, lineJoin: 'round' as const };
-      node.add(object.arrow ? new Konva.Arrow({ ...attrs, pointerLength: 14, pointerWidth: 12 }) : new Konva.Line(attrs));
-      return node;
-    }
-    if (object.kind === 'image') {
-      const image = this.images.get(object.assetId);
-      node.add(new Konva.Rect({ width: layout.width, height: layout.height, fill: '#e9edf5', stroke: '#d0d8e7', strokeWidth: 1 }));
-      if (image) node.add(new Konva.Image({ image, width: layout.width, height: layout.height }));
-      else node.add(new Konva.Text({ x: 12, y: 12, text: '图片加载中…', fontSize: 16, fill: '#667085' }));
-      return node;
-    }
-    if (object.kind === 'note') {
-      node.add(new Konva.Rect({ width: layout.width, height: layout.height, fill: '#FFF1AD', cornerRadius: 6, shadowColor: '#493d13', shadowOpacity: .12, shadowBlur: 10, shadowOffsetY: 4 }));
-      node.add(new Konva.Rect({ width: layout.width, height: 6, fill: '#E9CF6D', cornerRadius: [6, 6, 0, 0] }));
-    }
-    node.add(new Konva.Text({ x: 24, y: 24, width: 272, text: layout.lines.join('\n'), fontSize: 24, lineHeight: 34 / 24, wrap: 'none', fontFamily: 'monospace', fill: object.kind === 'note' ? '#3B3525' : object.color }));
-    return node;
-  }
+  private objectNode(object: BoardObject, draft = false) { return objectNode(object, this.renderObjects, id => this.images.get(id), draft); }
   private eraseAt(point: Point) {
     for (const stroke of this.session.getStrokes().reverse()) {
       const p = stroke.points, threshold = 10 / this.camera.zoom + stroke.width / 2;
@@ -257,7 +232,7 @@ export class BoardEngine {
     if (this.viewer) {
       const bounds = contentBounds([...strokes, ...previews.map(p => p.stroke)], allObjects);
       const b = this.viewMode === 'canvas' ? canvasBounds(bounds) : bounds ?? DEFAULT_CANVAS;
-      const target = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], this.viewSize());
+      const target = this.viewMode === 'content' ? fitTVContent(b, this.stage.width(), this.stage.height(), this.joinVisible) : fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], this.viewSize());
       const member = this.session.members.get(this.focusedMember);
       if (member?.cursor) this.focusedPoint = member.cursor;
       if (!member) this.focusedPoint = null;
@@ -280,6 +255,7 @@ export class BoardEngine {
       this.strokes.get(stroke.id)?.destroy();
       const line = this.line(stroke); this.documentGroup.add(line); this.strokes.set(stroke.id, line); this.strokeRefs.set(stroke.id, stroke);
     }
+    strokes.forEach((stroke, index) => this.strokes.get(stroke.id)?.zIndex(index));
     this.objectGroup.position(this.camera); this.objectGroup.scale({ x: this.camera.zoom, y: this.camera.zoom });
     const objectIds = new Set(objects.map(o => o.id));
     for (const [id, node] of this.objectNodes) if (!objectIds.has(id)) { node.destroy(); this.objectNodes.delete(id); this.objectRefs.delete(id); }

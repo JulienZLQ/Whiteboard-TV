@@ -83,3 +83,12 @@ hello.legacyTV=true 强制 viewer。ready.snapshot 和 snapshot 消息包含 str
 ## M3 形状与连接扩展
 
 新增 shape、connector 对象，沿用 create-object / update-object / delete-object 和临时 object-preview。端点及绑定为一个几何字段组；目标删除时同一事务解除连接，保留解析后端点。仅允许同房间非连接对象作为目标，非法或失效引用归为空端点。包含新对象的 JSON 副本为 v4；图片仍携带 PNG 内容。详细字段、并发与升级约定见 [形状与连线](15-shapes-connectors.md)。
+
+
+## 协作历史扩展
+
+客户端 `history {direction: undo|redo, mutationId}` 仅编辑凭证可发送，不接受客户端提供的逆补丁或历史所有者。服务端以个人凭证哈希查找历史，按房间队列计算并校验条件逆操作；`history-state {history: {undo, redo}}` 告知该凭证的可用步数，`saved` 可包含冲突跳过说明 `notice`。权限、容量、保存失败走既有 error 通道。
+
+文档扩展 `versions`（对象字段组/生命周期版本）、`historyEntries`（独立前后状态）、`history`（每个凭证的 undo/redo 引用栈）与 `commands`（新持久命令去重及历史操作结果）。不存储明文凭证到共享 Y.Doc。上述状态与对象/笔迹在同一次快照保存和增量广播中提交；旧快照没有这些字段时按空历史加载。保持已有对象删除墓碑与 objectMutations，显式历史恢复才清除对应墓碑。旧电视仍仅接收笔迹、对象与删除 ID 的只读快照。
+
+`renderOrder` 记录对象与笔迹的创建顺序，恢复删除时保留原顺序。客户端及旧电视快照均按该顺序排序；旧数据缺失时使用稳定 ID 次序，避免 Y.Map 在不同设备的枚举次序改变遮挡关系。

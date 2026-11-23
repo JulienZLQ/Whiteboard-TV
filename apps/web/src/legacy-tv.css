@@ -16,3 +16,5 @@ button.primary,button[aria-pressed=true]{background:#315efb;color:white;box-shad
 #view-controls{position:absolute;bottom:24px;right:24px;display:flex;padding:5px;align-items:center}#view-controls button{margin:0 3px;padding:12px 16px;font-size:16px;white-space:nowrap}#focus{max-width:200px;overflow:hidden;text-overflow:ellipsis}
 @media(max-height:650px){#qr-content{padding:12px}#qr-content img{width:128px;height:128px}#qr-content h2{font-size:18px;margin-bottom:8px}#qr-content p{margin:8px 0;font-size:14px}#claim{font-size:14px;padding:8px}#view-controls button{padding:12px;font-size:15px}#focus{max-width:180px}}
 @media(prefers-reduced-motion:reduce){button,#qr-content,.collapsed #qr-content{transition:none}}
+
+#members-panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:24px;width:440px;max-height:85vh;overflow:auto;box-shadow:0 0 0 100vmax #17203355}#members-panel h2{margin:0 0 16px}#members-list button{display:block;width:100%;margin-bottom:8px;text-align:left}#members-close{margin-top:16px;background:#f2f4f8}

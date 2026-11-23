@@ -1,3 +1,4 @@
+import { rowNavigation } from './tv-layout';
 import type { Credentials } from '@whiteboard/board-core';
 
 export const androidTV = () => new URL(location.href).searchParams.get('tvShell') === 'android';
@@ -27,6 +28,7 @@ function focus(el?: HTMLElement) { el?.focus({ preventScroll: true }); el?.scrol
 export function installTVNavigation() {
   if (new URL(location.href).searchParams.get('mode') !== 'tv') return () => {};
   document.documentElement.classList.add('tv-navigation');
+  const navigateRow = rowNavigation();
   const key = (key: string): boolean => {
     const items = controls(); if (!items.length) return false;
     const active = document.activeElement as HTMLElement;
@@ -38,6 +40,7 @@ export function installTVNavigation() {
     }
     if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) return false;
     if (!items.includes(active)) { focus(items.find(el => el.matches('.primary')) ?? items[0]); return true; }
+    if (navigateRow(key, active, items)) return true;
     if (active instanceof HTMLSelectElement && (key === 'ArrowUp' || key === 'ArrowDown')) {
       active.selectedIndex = Math.max(0, Math.min(active.options.length - 1, active.selectedIndex + (key === 'ArrowDown' ? 1 : -1)));
       active.dispatchEvent(new Event('change', { bubbles: true })); return true;

@@ -1,3 +1,4 @@
+import { rowNavigation, fitTVContent } from './tv-layout';
 import QRCode from 'qrcode';
 import { resolveObject, canvasBounds, DEFAULT_CANVAS, contentBounds, fitCamera, objectLayout, type AccessState, type BoardObject, type BoardSnapshot, type Credentials, type Member, type Camera, type Point, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 import './legacy-tv.css';
@@ -15,7 +16,7 @@ let camera: Camera | null = null, lastFrame = 0;
 let frame = 0, retryTimer = 0, retry = 500, stopped = false, connected = false, claimMode = false, qrKey = '', qrVersion = 0;
 let qrHidden = false, focusedMember = '';
 let focusedPoint: Point | null = null;
-const focusButton = get<HTMLButtonElement>('focus');
+const navigateRow = rowNavigation();
 const images = new ImageCache(() => credentials!, schedule);
 const room = new URL(location.href).searchParams.get('room');
 try {
@@ -102,16 +103,30 @@ get('toggle-qr').onclick = () => {
   get('toggle-qr').setAttribute('aria-expanded', String(!qrHidden)); schedule();
 };
 function updateViewControls() {
-  focusButton.textContent = focusedMember ? '关注 ' + members.find(m => m.id === focusedMember)!.name : '关注成员';
-  focusButton.setAttribute('aria-pressed', String(!!focusedMember));
+
   get('canvas-view').setAttribute('aria-pressed', String(!focusedMember && viewMode === 'canvas'));
   get('fit').setAttribute('aria-pressed', String(!focusedMember && viewMode === 'content'));
   get('view-label').textContent = focusedMember ? '电视视图 · 关注成员' : viewMode === 'canvas' ? '电视视图 · 完整画布' : '电视视图 · 全部内容';
 }
-focusButton.onclick = () => {
-  const options = [''].concat(members.filter(m => m.role === 'editor').map(m => m.id));
-  focusedPoint = null; focusedMember = options[(options.indexOf(focusedMember) + 1) % options.length]; updateViewControls(); schedule();
-};
+function closeMembers() { get('members-panel').hidden = true; get('manage-members').focus(); }
+function showMembers() {
+  const list = get('members-list'); list.textContent = '';
+  for (const member of members.filter(m => m.role === 'editor')) {
+    const button = document.createElement('button'); button.textContent = '关注 ' + member.name;
+    button.setAttribute('aria-pressed', String(focusedMember === member.id));
+    button.onclick = () => { focusedMember = focusedMember === member.id ? '' : member.id; focusedPoint = null; closeMembers(); updateViewControls(); schedule(); };
+    list.appendChild(button);
+  }
+  if (access?.claimToken) {
+    const button = document.createElement('button'); button.textContent = '手机管理';
+    button.onclick = () => { closeMembers(); claimMode = true; qrHidden = false; get('join').className = ''; get('qr-content').setAttribute('aria-hidden', 'false'); get('toggle-qr').textContent = '收起二维码'; get('toggle-qr').setAttribute('aria-expanded', 'true'); updateQR(); schedule(); };
+    list.appendChild(button);
+  }
+  if (!list.children.length) list.textContent = '暂无编辑成员';
+  get('members-panel').hidden = false; (list.querySelector('button') || get('members-close')).focus();
+}
+get('manage-members').onclick = showMembers;
+get('members-close').onclick = closeMembers;
 get('canvas-view').onclick = () => { viewMode = 'canvas'; focusedMember = ''; focusedPoint = null; updateViewControls(); schedule(); };
 get('fit').onclick = () => { viewMode = 'content'; focusedMember = ''; focusedPoint = null; updateViewControls(); schedule(); };
 
@@ -157,8 +172,8 @@ function paint() {
   const visible = Array.from(merged.values());
   const bounds = contentBounds(snapshot.strokes.concat(active), visible);
   const b = viewMode === 'canvas' ? canvasBounds(bounds) : bounds ?? DEFAULT_CANVAS;
-  const target = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], { width: Math.max(100, width - (qrHidden ? 0 : 290)), height: Math.max(100, height - 240) }, 32);
-  target.y += 110;
+  const target = viewMode === 'content' ? fitTVContent(b, width, height, !qrHidden) : fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], { width: Math.max(100, width - (qrHidden ? 0 : 290)), height: Math.max(100, height - 240) }, 32);
+  if (viewMode === 'canvas') target.y += 110;
   const focused = members.find(m => m.id === focusedMember);
   if (focused?.cursor) focusedPoint = focused.cursor;
   if (!focused) focusedPoint = null;
@@ -200,16 +215,17 @@ setInterval(() => {
 window.addEventListener('resize', schedule);
 window.WhiteboardTV = {
   key(key: string) {
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).filter(b => !b.disabled && b.getClientRects().length > 0 && !b.closest('[aria-hidden="true"]'));
+    const buttons = Array.from((get('members-panel').hidden ? document : get('members-panel')).querySelectorAll<HTMLButtonElement>('button')).filter(b => !b.disabled && b.getClientRects().length > 0 && !b.closest('[aria-hidden="true"]'));
     if (!buttons.length) return false;
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (key === 'Enter') { if (index < 0) buttons[0].focus(); else buttons[index].click(); return true; }
+    if (index >= 0 && navigateRow(key, buttons[index], buttons)) return true;
     const direction = key === 'ArrowRight' || key === 'ArrowDown' ? 1 : key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 0;
     if (!direction) return false;
     buttons[(index + direction + buttons.length) % buttons.length].focus(); return true;
   },
-  back() { if (claimMode) { claimMode = false; updateQR(); return true; } return false; },
+  back() { if (!get('members-panel').hidden) { closeMembers(); return true; } if (claimMode) { claimMode = false; updateQR(); return true; } return false; },
 };
-window.addEventListener('keydown', e => { if (window.WhiteboardTV!.key(e.key)) e.preventDefault(); });
+window.addEventListener('keydown', e => { if (e.key === 'Escape' ? window.WhiteboardTV!.back() : window.WhiteboardTV!.key(e.key)) e.preventDefault(); });
 if (credentials) { showBoard(); connect(); } else create.focus();
 schedule();

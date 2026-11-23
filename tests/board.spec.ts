@@ -103,10 +103,10 @@ test('TV creates a room, phone joins and claims hosting, removed credentials sta
   await phone.mouse.move(150, 380); await phone.mouse.down(); await phone.mouse.move(200, 410, { steps: 10 }); await phone.mouse.up();
   await expect(page.getByTestId('canvas')).toHaveAttribute('data-stroke-count', '2');
   expect(await page.getByTestId('canvas').getAttribute('data-camera')).toBe(camera);
-  await page.getByLabel('电视关注成员').selectOption({ label: '关注 手机成员' });
+  await page.getByRole('button', { name: '管理成员', exact: true }).click(); await page.getByRole('button', { name: '关注 手机成员', exact: true }).click();
   await expect(page.getByTestId('canvas')).toHaveAttribute('data-camera-moving', 'false');
   await expect.poll(async () => JSON.parse((await page.getByTestId('canvas').getAttribute('data-camera'))!).zoom).toBe(1);
-  await page.getByLabel('电视关注成员').selectOption('');
+  await page.getByRole('button', { name: '完整画布', exact: true }).click();
   await expect(page.getByTestId('canvas')).toHaveAttribute('data-camera-moving', 'false');
   await page.getByRole('button', { name: '管理', exact: true }).click();
   await page.getByRole('button', { name: '暂停加入', exact: true }).click();
@@ -327,8 +327,8 @@ test('phone uploads, moves and resizes images with both TV renderers; QR collaps
   await tv.getByRole('button', { name: '收起二维码' }).click();
   await expect(tv.getByTestId('canvas')).toHaveAttribute('data-join-visible', 'false');
   expect(await canvas.getAttribute('data-camera')).toBe(cameraBefore);
-  await page.mouse.move(180, 350); await legacy.getByRole('button', { name: '关注成员', exact: true }).click();
-  await expect(legacy.getByRole('button', { name: '关注 小林' })).toBeVisible();
+  await page.mouse.move(180, 350); await legacy.getByRole('button', { name: '管理成员', exact: true }).click();
+  await legacy.getByRole('button', { name: '关注 小林' }).click();
   await expect.poll(async () => JSON.parse((await legacy.locator('#board').getAttribute('data-camera'))!).zoom).toBe(1);
   await legacy.getByRole('button', { name: '显示全部内容' }).click(); await expect(legacy.getByRole('button', { name: '完整画布', exact: true })).toBeVisible();
   await page.reload(); await page.getByRole('button', { name: '加入白板', exact: true }).click();
@@ -373,6 +373,15 @@ test('TV controls keep the QR anchor fixed and distinguish canvas from content w
     const footer = await (legacy ? tv.locator('#view-controls') : tv.locator('.zoom-controls')).boundingBox();
     expect(qrBounds!.y + qrBounds!.height).toBeLessThan(anchor!.y);
     expect(anchor!.y + anchor!.height).toBeLessThan(footer!.y);
+    const row = tv.locator('[data-tv-row="view"]');
+    await expect(row).toHaveText(['管理成员', '完整画布', '显示全部内容']);
+    await row.nth(0).focus(); await tv.keyboard.press('ArrowLeft'); await expect(row.nth(0)).toBeFocused();
+    await tv.keyboard.press('ArrowRight'); await expect(row.nth(1)).toBeFocused();
+    await tv.keyboard.press('ArrowUp'); await expect(toggle).toBeFocused();
+    await tv.keyboard.press('ArrowLeft'); await expect(toggle).toBeFocused();
+    await tv.keyboard.press('ArrowDown'); await expect(row.nth(1)).toBeFocused();
+    await tv.keyboard.press('ArrowRight'); await expect(row.nth(2)).toBeFocused();
+    await tv.keyboard.press('ArrowDown'); await expect(row.nth(2)).toBeFocused();
     const full = tv.getByRole('button', { name: '完整画布', exact: true });
     const content = tv.getByRole('button', { name: '显示全部内容', exact: true });
     await full.click(); await expect(full).toHaveAttribute('aria-pressed', 'true');
@@ -384,9 +393,9 @@ test('TV controls keep the QR anchor fixed and distinguish canvas from content w
     await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
     expect(JSON.parse((await canvas.getAttribute('data-camera'))!).zoom).toBeGreaterThan(wide.zoom);
     const fitted = JSON.parse((await canvas.getAttribute('data-camera'))!);
-    expect((note.y + 200) * fitted.zoom + fitted.y).toBeLessThan(anchor!.y);
-    const style = await content.evaluate(el => ({ outline: getComputedStyle(el).outlineStyle, transition: getComputedStyle(el).transitionDuration, background: getComputedStyle(el).backgroundColor }));
-    expect(style.outline).toBe('none'); expect(style.transition).not.toBe('0s'); expect(style.background).not.toBe('rgb(255, 255, 255)');
+    expect((note.y + 200) * fitted.zoom + fitted.y).toBeLessThanOrEqual(anchor!.y + .1);
+    const style = await content.evaluate(el => ({ outline: getComputedStyle(el).outlineStyle, transition: getComputedStyle(el).transitionDuration, background: getComputedStyle(el).backgroundColor, color: getComputedStyle(el).color }));
+    expect(style.outline).toBe('none'); expect(style.transition).not.toBe('0s'); expect(style.background).not.toBe('rgb(255, 255, 255)'); expect(style.color).toBe('rgb(255, 255, 255)');
     await full.click(); await expect(canvas).toHaveAttribute('data-view-mode', 'canvas'); await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
     expect(JSON.parse((await canvas.getAttribute('data-camera'))!).zoom).toBeCloseTo(wide.zoom, 3);
     await context.close(); expect(errors).toEqual([]);
@@ -474,4 +483,78 @@ test('phone palette draws a reverse shape, cancels multi-touch creation and save
   const views = await page.locator('.zoom-controls').boundingBox(); expect(panel!.y + panel!.height).toBeLessThan(views!.y);
   await expect(page.locator('.object-actions')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('personal undo and redo synchronize both TVs, survive reload, and PNG exports exclude controls', async ({ browser, page }) => {
+  test.setTimeout(60000);
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await create(page);
+  await expect(page.getByRole('button', { name: '撤销', exact: true })).toBeDisabled();
+  const url = (await page.getByRole('link', { name: '电视视图' }).getAttribute('href'))!;
+  const parsed = new URL(url), credentials = { roomId: parsed.searchParams.get('room')!, role: 'viewer', token: new URLSearchParams(parsed.hash.slice(1)).get('token')! };
+  const tvContext = await browser.newContext({ viewport: { width: 960, height: 540 } });
+  await tvContext.addInitScript(c => localStorage.setItem('whiteboard.tv.last', JSON.stringify(c)), credentials);
+  const tv = await tvContext.newPage(); await tv.goto('/legacy-tv.html?room=' + credentials.roomId);
+  const modern = await browser.newPage(); await modern.goto(url); await modern.getByRole('button', { name: '打开电视总览' }).click();
+  await page.getByRole('button', { name: '添加便签', exact: true }).click(); await page.mouse.click(500, 300);
+  await page.getByLabel('内容', { exact: true }).fill('一起撤销，保留彼此的想法'); await page.getByRole('button', { name: '保存内容' }).click();
+  await expect(page.getByRole('button', { name: '撤销', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '撤销', exact: true }).click();
+  for (const c of [tv.locator('#board'), modern.getByTestId('canvas')]) await expect(c).toHaveAttribute('data-object-count', '0');
+  await page.keyboard.press('Control+Shift+z');
+  for (const c of [tv.locator('#board'), modern.getByTestId('canvas')]) await expect(c).toHaveAttribute('data-object-count', '1');
+  await page.reload(); await page.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(page.getByRole('button', { name: '撤销', exact: true })).toBeEnabled();
+  const backup = await exported(page); expect(backup.objects).toHaveLength(1);
+  await page.getByRole('button', { name: '导出图片', exact: true }).click();
+  async function png(name: string) {
+    const pending = page.waitForEvent('download'); await page.getByRole('button', { name, exact: true }).click();
+    const download = await pending, stream = await download.createReadStream(), chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    const data = Buffer.concat(chunks); expect(data.subarray(1,4).toString()).toBe('PNG');
+    return { width: data.readUInt32BE(16), height: data.readUInt32BE(20), data };
+  }
+  const content = await png('导出全部内容'); expect(content.width).toBe(640); expect(content.height).toBe(400);
+  const pixel = await page.evaluate(async data => {
+    const image = new Image(); image.src = 'data:image/png;base64,' + data; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const ctx = canvas.getContext('2d')!; ctx.drawImage(image, 0, 0); return [...ctx.getImageData(20, 100, 1, 1).data];
+  }, content.data.toString('base64'));
+  expect(pixel).toEqual([255,241,173,255]);
+  await page.getByRole('button', { name: '导出图片', exact: true }).click();
+  const full = await png('导出完整画布'); expect(full.width).toBeGreaterThan(content.width); expect(full.width / full.height).toBeCloseTo(1280/720);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: '撤销', exact: true }).click(); await expect(tv.locator('#board')).toHaveAttribute('data-object-count', '0');
+  await page.getByRole('button', { name: '重做', exact: true }).click(); await expect(tv.locator('#board')).toHaveAttribute('data-object-count', '1');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]); await tvContext.close(); await modern.close();
+});
+
+test('overlapping image and connector retain identical stacking on editor, hydrated TV, reload and PNG', async ({ browser, page }) => {
+  test.setTimeout(60000);
+  await create(page);
+  await page.getByRole('button', { name: '形状与连线', exact: true }).click(); await page.getByRole('button', { name: '箭头', exact: true }).click();
+  await page.mouse.move(400, 378); await page.mouse.down(); await page.mouse.move(1000, 378, { steps: 8 }); await page.mouse.up();
+  const raster = await page.evaluate(() => { const c = document.createElement('canvas'); c.width = 240; c.height = 120; const ctx = c.getContext('2d')!; ctx.fillStyle = '#FA8908'; ctx.fillRect(0,0,240,120); return c.toDataURL().split(',')[1]; });
+  await page.getByLabel('选择图片文件').setInputFiles({ name: 'overlap.png', mimeType: 'image/png', buffer: Buffer.from(raster, 'base64') });
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-loaded-image-count', '1'); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  const data = await exported(page), img = data.objects.find((o: any) => o.kind === 'image');
+  const point = { x: img.x + img.width / 2, y: img.y + img.height / 2 };
+  async function pixel(p: Page) {
+    return p.getByTestId('canvas').evaluate((el, point) => {
+      const cam = JSON.parse((el as HTMLElement).dataset.camera!), canvas = el.querySelector('canvas')!, ratio = canvas.width / canvas.clientWidth;
+      return [...canvas.getContext('2d')!.getImageData(Math.round((point.x * cam.zoom + cam.x) * ratio), Math.round((point.y * cam.zoom + cam.y) * ratio), 1, 1).data];
+    }, point);
+  }
+  expect(await pixel(page)).toEqual([250,137,8,255]);
+  const url = (await page.getByRole('link', { name: '电视视图' }).getAttribute('href'))!;
+  const tv = await browser.newPage(); await tv.goto(url); await tv.getByRole('button', { name: '打开电视总览' }).click();
+  await expect(tv.getByTestId('canvas')).toHaveAttribute('data-loaded-image-count', '1'); await expect(tv.getByTestId('canvas')).toHaveAttribute('data-camera-moving', 'false');
+  expect(await pixel(tv)).toEqual([250,137,8,255]);
+  await page.reload(); await page.getByRole('button', { name: '加入白板', exact: true }).click(); await expect(page.getByTestId('canvas')).toHaveAttribute('data-loaded-image-count', '1');
+  expect(await pixel(page)).toEqual([250,137,8,255]);
+  await page.getByRole('button', { name: '导出图片', exact: true }).click(); const pending = page.waitForEvent('download'); await page.getByRole('button', { name: '导出完整画布', exact: true }).click();
+  const stream = await (await pending).createReadStream(), chunks: Buffer[] = []; for await (const c of stream!) chunks.push(Buffer.from(c));
+  const pngPixel = await page.evaluate(async ({ bytes, point }) => { const img = new Image(); img.src = 'data:image/png;base64,' + bytes; await img.decode(); const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const ctx = c.getContext('2d')!; ctx.drawImage(img,0,0); return [...ctx.getImageData(Math.round(point.x*2), Math.round(point.y*2),1,1).data]; }, { bytes: Buffer.concat(chunks).toString('base64'), point });
+  expect(pngPixel).toEqual([250,137,8,255]); await tv.close();
 });

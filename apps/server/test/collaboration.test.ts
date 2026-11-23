@@ -264,3 +264,88 @@ test('connected shapes merge geometry, detach at deletion, reject type changes a
     assert.deepEqual(restored.doc.getMap('objects').get(link.id), { ...resolved, fromId: null });
   } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('personal durable history preserves other fields, skips competing writes, restores links, and deduplicates after restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'whiteboard-history-'));
+  let app = createWhiteboardServer({ dataDir: directory });
+  const clients: Awaited<ReturnType<typeof client>>[] = [];
+  let sequence = 0;
+  const send = async (c: Awaited<ReturnType<typeof client>>, value: any) => {
+    const mutationId = 'history-test-' + (++sequence); c.send({ ...value, mutationId });
+    return c.wait('saved', m => m.mutationId === mutationId);
+  };
+  try {
+    let port = await app.listen(0);
+    const room = await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    const a = await client(port, room, 'A');
+    const b = await client(port, { ...room, token: a.ready.access!.inviteToken }, 'B');
+    const tv = await client(port, { ...room, token: room.viewerToken! }, 'TV', true); clients.push(a,b,tv);
+    const shape = { id: 'history-shape', kind: 'shape', shape: 'rectangle', x: 0, y: 0, width: 200, height: 120, color: '#315EFB' };
+    await send(a, { type: 'create-object', object: shape });
+    await send(a, { type: 'update-object', objectId: shape.id, patch: { x: 100, y: 50 } });
+    await send(b, { type: 'update-object', objectId: shape.id, patch: { width: 300, height: 180 } });
+    await send(a, { type: 'history', direction: 'undo' });
+    let value = a.doc.getMap<any>('objects').get(shape.id);
+    assert.equal(value.x, 0); assert.equal(value.width, 300, 'undo movement preserves peer resize');
+    await send(a, { type: 'history', direction: 'redo' });
+    assert.equal(a.doc.getMap<any>('objects').get(shape.id).x, 100);
+    await send(b, { type: 'update-object', objectId: shape.id, patch: { x: 100, y: 50 } });
+    assert.match((await send(a, { type: 'history', direction: 'undo' })).notice!, /已跳过/, 'same-value writes still own the field');
+    assert.equal(a.doc.getMap<any>('objects').get(shape.id).x, 100);
+    const link = { id: 'history-connector', kind: 'connector', x: 200, y: 100, dx: 300, dy: 0, fromId: shape.id, toId: null, arrow: true, color: '#315EFB' };
+    await send(a, { type: 'create-object', object: link });
+    await send(a, { type: 'delete-object', objectId: shape.id });
+    assert.equal(a.doc.getMap<any>('objects').get(link.id).fromId, null);
+    const undo = await send(a, { type: 'history', direction: 'undo' });
+    assert.equal(undo.notice, undefined);
+    assert.equal(a.doc.getMap<any>('objects').get(link.id).fromId, shape.id);
+    assert.equal(a.doc.getMap<any>('objects').get(shape.id).width, 300);
+    const restored = await tv.wait('snapshot', m => m.objects.some(o => o.id === shape.id) && m.objects.some(o => o.kind === 'connector' && o.fromId === shape.id));
+    assert.equal(restored.deletedObjectIds!.includes(shape.id), false);
+    assert.deepEqual(restored.objects.map(o => o.id), [shape.id, link.id], 'delete/undo retains durable stacking order');
+    await send(a, { type: 'history', direction: 'redo' });
+    await send(a, { type: 'history', direction: 'undo' });
+    const originalCommit = { type: 'commit' as const, stroke, mutationId: 'history-original-commit' };
+    a.send(originalCommit); await a.wait('saved', m => m.mutationId === originalCommit.mutationId);
+    await send(b, { type: 'delete', strokeId: stroke.id });
+    await send(b, { type: 'history', direction: 'undo' });
+    assert.equal(a.doc.getMap('strokes').has(stroke.id), true);
+    const lastUndo = await send(a, { type: 'history', direction: 'undo' });
+    assert.equal(a.doc.getMap('strokes').has(stroke.id), false);
+    a.send(originalCommit); await a.wait('saved', m => m.mutationId === originalCommit.mutationId);
+    assert.equal(a.doc.getMap('strokes').has(stroke.id), false, 'replayed creation cannot restore undone stroke');
+    tv.send({ type: 'history', direction: 'redo', mutationId: 'viewer-history-test' });
+    assert.match((await tv.wait('error')).message, /仅可观看/);
+    clients.forEach(c => c.ws.terminate()); await app.close();
+    app = createWhiteboardServer({ dataDir: directory }); port = await app.listen(0);
+    const reconnected = await client(port, room, 'A reconnected'); clients.push(reconnected);
+    assert.ok((await reconnected.wait('history-state')).history.redo > 0);
+    reconnected.send({ type: 'history', direction: 'undo', mutationId: lastUndo.mutationId });
+    await reconnected.wait('saved', m => m.mutationId === lastUndo.mutationId);
+    assert.equal(reconnected.doc.getMap('objects').size, 2, 'repeated undo after reconnect does not undo another item');
+    await send(reconnected, { type: 'history', direction: 'redo' });
+    assert.equal(reconnected.doc.getMap('strokes').has(stroke.id), true);
+  } finally { clients.forEach(c => { c.ws.terminate(); c.doc.destroy(); }); await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('failed history persistence leaves the document and undo stack intact until a successful retry', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'whiteboard-history-atomic-'));
+  const app = createWhiteboardServer({ dataDir: directory }), port = await app.listen(0);
+  let a: Awaited<ReturnType<typeof client>> | undefined;
+  try {
+    const room = await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    a = await client(port, room, 'A');
+    a.send({ type: 'commit', stroke, mutationId: 'atomic-stroke-create' }); await a.wait('saved');
+    const save = app.store.save.bind(app.store);
+    app.store.save = async () => { throw new Error('injected write failure'); };
+    const command = { type: 'history' as const, direction: 'undo' as const, mutationId: 'atomic-undo-retry' };
+    a.send(command); await a.wait('error', m => m.mutationId === command.mutationId);
+    assert.equal(a.doc.getMap('strokes').size, 1);
+    assert.equal((await app.store.get(room.roomId)).doc.getMap('strokes').size, 1);
+    app.store.save = save;
+    a.send(command); await a.wait('saved', m => m.mutationId === command.mutationId);
+    assert.equal(a.doc.getMap('strokes').size, 0);
+    a.send(command); await a.wait('saved', m => m.mutationId === command.mutationId);
+    assert.equal(a.doc.getMap('strokes').size, 0);
+  } finally { a?.ws.terminate(); a?.doc.destroy(); await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
