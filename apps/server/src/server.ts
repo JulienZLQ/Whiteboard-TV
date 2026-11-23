@@ -4,10 +4,10 @@ import { resolve, extname, sep } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as Y from 'yjs';
-import { COLORS, LIMITS, validPoint, validStroke, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
+import { COLORS, LIMITS, OBJECT_LIMITS, validId, validObject, validObjectPatch, validPoint, validStroke, type BoardObject, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
 import { RoomStore, secret, type Room } from './store';
 
-type Peer = { room: Room; member: Member; token: string; previewSeq: number; alive: boolean };
+type Peer = { room: Room; member: Member; token: string; previewSeq: number; objectSeq: number; alive: boolean };
 const matches = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 
@@ -19,7 +19,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M2"}'); return; }
+    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M3-text"}'); return; }
     if (url.pathname === '/api/rooms' && req.method === 'POST') {
       // JSON/custom-header requirement blocks ordinary cross-origin forms; no CORS is enabled.
       if (req.headers['x-whiteboard-client'] !== '1' || creating >= 4) { res.writeHead(403).end(); return; }
@@ -96,7 +96,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
             if (!role) { ws.close(1008, 'Invalid credentials'); return; }
             if (hello.viewOnly) role = 'viewer';
             const member: Member = { id: randomBytes(8).toString('hex'), name: hello.name.replace(/[\u0000-\u001f]/g, '').slice(0, 20) || '访客', color: COLORS[members(room).length % COLORS.length], role, host, cursor: null };
-            peers.set(ws, { room, member, token, previewSeq: -1, alive: true }); clearTimeout(deadline);
+            peers.set(ws, { room, member, token, previewSeq: -1, objectSeq: -1, alive: true }); clearTimeout(deadline);
             send(ws, { type: 'ready', memberId: member.id, token, host, role, access: access(room, host), viewerToken: room.viewerToken, update: Buffer.from(Y.encodeStateAsUpdate(room.doc)).toString('base64'), members: members(room) });
             publishMembers(room); publishAccess(room);
           }).catch(() => ws.close(1008, 'Room unavailable'));
@@ -128,6 +128,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
           for (const [socket, p] of peers) if (p.room === room && (next.ended || (removed && p.token === removed.token))) {
             peers.delete(socket); socket.close(1008, next.ended ? 'Session ended' : 'Removed by host');
             broadcast(room, { type: 'preview', memberId: p.member.id, stroke: null });
+            broadcast(room, { type: 'object-preview', memberId: p.member.id, object: null });
           }
           publishMembers(room);
         }).catch(() => send(ws, { type: 'error', message: '管理操作保存失败，请重试' }));
@@ -139,6 +140,43 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
         if (peer.member.role !== 'editor' || !Number.isSafeInteger(message.seq) || message.seq <= peer.previewSeq || (message.stroke !== null && !validStroke(message.stroke))) return;
         peer.previewSeq = message.seq;
         broadcast(peer.room, { type: 'preview', memberId: peer.member.id, stroke: message.stroke }, ws);
+      } else if (message.type === 'object-preview') {
+        if (peer.member.role !== 'editor' || !Number.isSafeInteger(message.seq) || message.seq <= peer.objectSeq || (message.object !== null && !validObject(message.object))) return;
+        peer.objectSeq = message.seq;
+        broadcast(peer.room, { type: 'object-preview', memberId: peer.member.id, object: message.object }, ws);
+      } else if (message.type === 'create-object' || message.type === 'update-object' || message.type === 'delete-object') {
+        const operation = message;
+        if (!validId(operation.mutationId)) return;
+        if (peer.member.role !== 'editor') { send(ws, { type: 'error', message: '电视凭证仅可观看', mutationId: operation.mutationId }); return; }
+        if (operation.type === 'create-object' ? !validObject(operation.object) : !validId(operation.objectId) || (operation.type === 'update-object' && !validObjectPatch(operation.patch))) {
+          send(ws, { type: 'error', message: '文字或对象超出支持范围', mutationId: operation.mutationId }); return;
+        }
+        peer.room.queue = peer.room.queue.then(async () => {
+          if (peers.get(ws) !== peer || peer.room.access.ended) return;
+          const room = peer.room, candidate = new Y.Doc();
+          try {
+            Y.applyUpdate(candidate, Y.encodeStateAsUpdate(room.doc));
+            const objects = candidate.getMap<BoardObject>('objects'), deleted = candidate.getMap<boolean>('deletedObjects'), applied = candidate.getMap<boolean>('objectMutations');
+            if (!applied.has(operation.mutationId)) {
+              if (applied.size >= OBJECT_LIMITS.mutations) throw new Error('对象操作数量已达预览版本上限');
+              const id = operation.type === 'create-object' ? operation.object.id : operation.objectId;
+              if (operation.type === 'create-object' && !objects.has(id) && !deleted.has(id)) {
+                if (objects.size >= OBJECT_LIMITS.count) throw new Error('文字与便签数量已达预览版本上限');
+                const { kind, x, y, text, color } = operation.object;
+                objects.set(id, { id, kind, x, y, text, color });
+              } else if (operation.type === 'update-object' && objects.has(id) && !deleted.has(id)) {
+                objects.set(id, { ...objects.get(id)!, ...operation.patch });
+              } else if (operation.type === 'delete-object') { deleted.set(id, true); objects.delete(id); }
+              applied.set(operation.mutationId, true);
+              await store.save(room, candidate);
+              const update = Y.encodeStateAsUpdate(candidate, Y.encodeStateVector(room.doc));
+              Y.applyUpdate(room.doc, update);
+              broadcast(room, { type: 'update', update: Buffer.from(update).toString('base64') });
+            }
+            broadcast(room, { type: 'object-preview', memberId: peer.member.id, object: null });
+            send(ws, { type: 'saved', mutationId: operation.mutationId });
+          } finally { candidate.destroy(); }
+        }).catch(error => send(ws, { type: 'error', mutationId: operation.mutationId, message: error.message?.includes('上限') ? error.message : '保存失败，请重试；本地内容仍保留' }));
       } else if (message.type === 'commit' || message.type === 'delete') {
         const operation = message;
         if (typeof operation.mutationId !== 'string' || !/^[a-zA-Z0-9_-]{8,80}$/.test(operation.mutationId)) return;
@@ -176,7 +214,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
     ws.on('close', () => {
       clearTimeout(deadline);
       const peer = peers.get(ws); peers.delete(ws);
-      if (peer) { publishMembers(peer.room); broadcast(peer.room, { type: 'preview', memberId: peer.member.id, stroke: null }); }
+      if (peer) { broadcast(peer.room, { type: 'object-preview', memberId: peer.member.id, object: null }); publishMembers(peer.room); broadcast(peer.room, { type: 'preview', memberId: peer.member.id, stroke: null }); }
     });
   });
   const heartbeat = setInterval(() => {

@@ -46,3 +46,30 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   .tv-navigation .invite-dialog p, .tv-navigation .member-list { font-size: 19px; }
   .tv-navigation .invite-dialog .primary, .tv-navigation .invite-dialog .secondary, .tv-navigation .invite-dialog .danger { font-size: 19px; min-height: 52px; }
 }
+
+/* Text and sticky note tools share the existing canvas, with touch-sized controls. */
+.object-editor { text-align: left; width: 480px; max-height: 90dvh; overflow-y: auto; }
+.object-editor textarea { display: block; width: 100%; min-height: 180px; max-height: 35dvh; resize: vertical; border: 1px solid #dce2ed; border-radius: 12px; padding: 16px; font: inherit; font-size: 18px; line-height: 1.6; color: #172033; background: #fbfcff; }
+.object-editor textarea:focus { outline: 2px solid #315efb; outline-offset: 2px; }
+.editor-meta { display: flex; justify-content: space-between; gap: 12px; margin: 12px 0 20px; font-size: 12px; color: #667085; }
+.editor-meta span:last-child { flex-shrink: 0; }
+.editor-actions { display: flex; justify-content: flex-end; gap: 12px; }
+.object-actions { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 8px; display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+.object-actions>span { font-size: 13px; color: #667085; padding-left: 8px; }
+.tool-hint { position: absolute; left: 50%; bottom: 110px; transform: translateX(-50%); padding: 10px 18px; background: #172033; border-radius: 24px; color: white; font-size: 14px; pointer-events: none; white-space: nowrap; }
+.toolbar { max-height: calc(100dvh - 170px); overflow-y: auto; }
+@media(min-width:701px) { .toolbar { gap: 8px; } .toolbar .tools { gap: 3px; } .toolbar .icon-button { height: 44px; } .toolbar .colors { gap: 3px; } }
+@media(max-width:700px) {
+  .toolbar { width: calc(100% - 24px); max-width: 440px; flex-direction: column; gap: 2px; padding: 5px; bottom: max(12px, env(safe-area-inset-bottom)); }
+  .toolbar .tools { width: 100%; justify-content: space-around; }
+  .toolbar .colors { justify-content: center; gap: 12px; }
+  .toolbar .divider { width: calc(100% - 16px); height: 1px; }
+  .toolbar .color-button { height: 32px; width: 40px; }
+  .toolbar .icon-button { width: 40px; height: 44px; }
+  .save-status, .zoom-controls { bottom: 116px; }
+  .object-actions { bottom: 166px; gap: 6px; max-width: calc(100% - 24px); }
+  .object-actions>span { display: none; }
+  .object-actions button { min-height: 44px; font-size: 14px; }
+  .tool-hint { bottom: 176px; }
+  .object-editor { padding: 28px 20px 20px; }
+}

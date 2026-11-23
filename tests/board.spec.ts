@@ -169,3 +169,81 @@ test('TV remote navigation closes nested dialogs and restores room after app sto
   expect(errors).toEqual([]);
   await context.close();
 });
+
+async function exported(page: Page) {
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出本地副本' }).click();
+  const stream = await (await downloadPromise).createReadStream();
+  const chunks = []; for await (const chunk of stream!) chunks.push(chunk);
+  return JSON.parse(Buffer.concat(chunks).toString());
+}
+async function objectPoint(page: Page, object: { x: number; y: number }) {
+  const camera = JSON.parse((await page.getByTestId('canvas').getAttribute('data-camera'))!);
+  return { x: (object.x + 50) * camera.zoom + camera.x, y: (object.y + 60) * camera.zoom + camera.y };
+}
+test('Chinese text and notes preview, move, edit, cancel, export and recover on TV', async ({ browser, page, context }) => {
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await create(page);
+  const tvContext = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const tv = await tvContext.newPage(); await tv.goto((await page.getByRole('link', { name: '电视视图' }).getAttribute('href'))!);
+  await tv.getByRole('button', { name: '打开电视总览' }).click();
+  const tvCanvas = tv.getByTestId('canvas');
+  await page.getByRole('button', { name: '添加便签', exact: true }).click(); await page.mouse.click(420, 320);
+  await page.getByLabel('内容', { exact: true }).fill('共同创作\n今天先确定方向');
+  await expect(tvCanvas).toHaveAttribute('data-object-preview-count', '1');
+  await expect(tvCanvas).toHaveAttribute('data-object-count', '0');
+  // An IME composition Enter must not prematurely submit.
+  await page.getByLabel('内容', { exact: true }).dispatchEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true });
+  await expect(page.getByRole('button', { name: '保存内容' })).toBeVisible();
+  await page.getByRole('button', { name: '保存内容' }).click();
+  await expect(tvCanvas).toHaveAttribute('data-object-count', '1');
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  let backup = await exported(page); expect(backup.schemaVersion).toBe(2); expect(backup.objects[0].text).toContain('共同创作');
+  const start = await objectPoint(page, backup.objects[0]);
+  await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(start.x + 180, start.y + 80, { steps: 10 });
+  await expect(tvCanvas).toHaveAttribute('data-object-preview-count', '1');
+  await page.mouse.up(); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  const moved = await exported(page); expect(moved.objects[0].x).toBeGreaterThan(backup.objects[0].x + 100);
+  await page.getByRole('button', { name: '编辑内容' }).click();
+  await page.getByLabel('内容', { exact: true }).fill('取消这一条修改');
+  await expect(tvCanvas).toHaveAttribute('data-object-preview-count', '1');
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(tvCanvas).toHaveAttribute('data-object-preview-count', '0');
+  expect((await exported(page)).objects[0].text).toBe(backup.objects[0].text);
+  await context.setOffline(true); await expect(page.getByText('连接中断', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '编辑内容' }).click();
+  await page.getByLabel('内容', { exact: true }).fill('离线修改\n重新连接后保存');
+  await page.getByRole('button', { name: '保存内容' }).click(); await expect(page.getByText('1 项待保存')).toBeVisible();
+  await context.setOffline(false); await expect(page.getByText('已保存', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: '添加文字', exact: true }).click(); await page.mouse.click(850, 300);
+  await page.getByLabel('内容', { exact: true }).fill('共创目标'); await page.getByRole('button', { name: '保存内容' }).click();
+  await expect(tvCanvas).toHaveAttribute('data-object-count', '2');
+  await page.reload(); await page.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-object-count', '2');
+  backup = await exported(page); expect(backup.objects.find((o: {kind: string}) => o.kind === 'note').text).toBe('离线修改\n重新连接后保存');
+  await page.getByRole('button', { name: '选择对象' }).click();
+  const point = await objectPoint(page, backup.objects[0]); await page.mouse.click(point.x, point.y);
+  await page.getByRole('button', { name: '删除对象' }).click();
+  await expect(tvCanvas).toHaveAttribute('data-object-count', '1');
+  expect(errors).toEqual([]); await tvContext.close();
+});
+
+test('phone note creation and remote deletion while editing keep the draft copyable', async ({ browser, page }) => {
+  await create(page);
+  await page.getByRole('button', { name: '邀请加入', exact: true }).click(); const invitation = await page.locator('#invite-link').inputValue(); await page.getByRole('button', { name: '关闭邀请' }).click();
+  const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const mobile = await mobileContext.newPage(); await mobile.goto(invitation);
+  await mobile.getByPlaceholder('怎么称呼你？').fill('小张'); await mobile.getByRole('button', { name: '加入白板', exact: true }).click();
+  await mobile.getByRole('button', { name: '添加便签', exact: true }).click(); await mobile.touchscreen.tap(100, 300);
+  await mobile.getByLabel('内容', { exact: true }).fill('手机便签'); await mobile.getByRole('button', { name: '保存内容' }).click();
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-object-count', '1');
+  expect(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const buttons = await mobile.getByRole('toolbar').getByRole('button').evaluateAll(nodes => nodes.map(node => { const r = node.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })); expect(buttons.every(Boolean)).toBe(true);
+  await mobile.getByRole('button', { name: '编辑内容' }).click(); await mobile.getByLabel('内容', { exact: true }).fill('还没保存的草稿');
+  const backup = await exported(page), point = await objectPoint(page, backup.objects[0]);
+  await page.getByRole('button', { name: '选择对象' }).click(); await page.mouse.click(point.x, point.y); await page.getByRole('button', { name: '删除对象' }).click();
+  await expect(mobile.getByRole('button', { name: '保存内容' })).toBeDisabled();
+  await expect(mobile.getByLabel('内容', { exact: true })).toHaveValue('还没保存的草稿');
+  await mobile.getByRole('button', { name: '取消', exact: true }).click(); await expect(mobile.getByTestId('canvas')).toHaveAttribute('data-object-count', '0');
+  await mobileContext.close();
+});

@@ -135,3 +135,39 @@ test('host lifecycle: personal credentials, pause, rotation, revocation, one-tim
     assert.equal((await app.store.get(room.roomId)).doc.getMap('strokes').size, 1);
   } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('text objects: previews, field-wise updates, retry deduplication, delete wins and restart recovery', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'whiteboard-objects-'));
+  let app = createWhiteboardServer({ dataDir: directory }), port = await app.listen(0);
+  const clients: Awaited<ReturnType<typeof client>>[] = [];
+  try {
+    const room = await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    const a = await client(port, room, 'A'), b = await client(port, room, 'B'), tv = await client(port, { ...room, token: room.viewerToken! }, 'TV'); clients.push(a, b, tv);
+    const object = { id: 'object-note-01', kind: 'note' as const, x: 10, y: 20, text: '第一行\n共同创作', color: '#315EFB' };
+    a.send({ type: 'object-preview', object, seq: 1 });
+    assert.deepEqual((await tv.wait('object-preview', m => !!m.object)).object, object);
+    assert.equal(tv.doc.getMap('objects').size, 0);
+    tv.send({ type: 'create-object', object, mutationId: 'viewer-object-denied' }); assert.match((await tv.wait('error')).message, /仅可观看/);
+    a.send({ type: 'create-object', object: { ...object, text: 'x'.repeat(501) }, mutationId: 'too-long-object' }); assert.match((await a.wait('error')).message, /范围/);
+    a.send({ type: 'create-object', object, mutationId: 'create-object-01' }); await a.wait('saved');
+    const move = { type: 'update-object' as const, objectId: object.id, patch: { x: 200, y: 300 }, mutationId: 'move-object-01' };
+    a.send(move); b.send({ type: 'update-object', objectId: object.id, patch: { text: '新的内容' }, mutationId: 'text-object-01' });
+    await Promise.all([a.wait('saved'), b.wait('saved')]);
+    assert.deepEqual(b.doc.getMap('objects').get(object.id), { ...object, x: 200, y: 300, text: '新的内容' });
+    b.send({ ...move, patch: { x: 500, y: 600 }, mutationId: 'move-object-02' }); await b.wait('saved');
+    a.send(move); await a.wait('saved');
+    assert.equal((a.doc.getMap('objects').get(object.id) as typeof object).x, 500, 'an acknowledged replay must not overwrite a newer move');
+    b.send({ type: 'create-object', object: { ...object, id: 'object-text-02', kind: 'text' }, mutationId: 'create-object-02' }); await b.wait('saved');
+    b.send({ type: 'delete-object', objectId: object.id, mutationId: 'delete-object-01' }); await b.wait('saved');
+    a.send({ ...move, mutationId: 'late-move-object' }); await a.wait('saved');
+    a.send({ type: 'create-object', object, mutationId: 'late-create-object' }); await a.wait('saved');
+    assert.equal(a.doc.getMap('objects').has(object.id), false);
+    for (const c of clients) c.ws.terminate(); await app.close();
+    app = createWhiteboardServer({ dataDir: directory }); port = await app.listen(0);
+    const restored = await client(port, room, 'Restored'); clients.push(restored);
+    assert.equal(restored.doc.getMap('objects').size, 1);
+    assert.equal(restored.doc.getMap('objects').has('object-text-02'), true);
+    assert.equal(restored.doc.getMap('deletedObjects').has(object.id), true);
+    assert.equal(restored.doc.getMap('objectMutations').has(move.mutationId), true);
+  } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
+});

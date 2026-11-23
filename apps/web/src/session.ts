@@ -1,14 +1,15 @@
 import { saveCredentials } from './tv';
 import * as Y from 'yjs';
-import { LIMITS, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
+import { LIMITS, type BoardObject, type ObjectPatch, type ObjectMutation, type ObjectPreview, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 
 export function newId() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''); }
-type Mutation = Extract<ClientMessage, { type: 'commit' | 'delete' }>;
+type Mutation = Extract<ClientMessage, { type: 'commit' | 'delete' }> | ObjectMutation;
 export type SessionState = { host: boolean; access?: AccessState; connection: 'connecting' | 'online' | 'offline' | 'denied'; pending: number; error: string; members: Member[]; memberId: string };
 const decode = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0));
 
 export class BoardSession {
   readonly doc = new Y.Doc();
+  readonly objectPreviews = new Map<string, ObjectPreview>();
   readonly previews = new Map<string, Preview>();
   readonly members = new Map<string, Member>();
   private pending = new Map<string, Mutation>();
@@ -21,6 +22,8 @@ export class BoardSession {
   private sweep: ReturnType<typeof setInterval>;
   private retry = 500;
   private seq = 0;
+  private objectSeq = 0;
+  private lastObjectPreview = 0;
   private lastPresence = 0;
   private lastPreview = 0;
   private queueKey: string;
@@ -37,6 +40,7 @@ export class BoardSession {
     this.sweep = setInterval(() => {
       let changed = false;
       for (const [id, preview] of this.previews) if (Date.now() - preview.updatedAt > LIMITS.previewTtl) { this.previews.delete(id); changed = true; }
+      for (const [id, preview] of this.objectPreviews) if (Date.now() - preview.updatedAt > LIMITS.previewTtl) { this.objectPreviews.delete(id); changed = true; }
       if (changed) this.redraw();
     }, 500);
   }
@@ -68,7 +72,7 @@ export class BoardSession {
       let message: ServerMessage;
       try { message = JSON.parse(event.data); } catch { return; }
       if (message.type === 'ready') {
-        this.retry = 500; this.seq = 0;
+        this.retry = 500; this.seq = 0; this.objectSeq = 0;
         this.credentials.viewerToken = message.viewerToken;
         this.credentials.role = message.role;
         if (message.token) this.credentials.token = message.token;
@@ -89,6 +93,10 @@ export class BoardSession {
         if (message.stroke) this.previews.set(message.memberId, { memberId: message.memberId, stroke: message.stroke, updatedAt: Date.now() });
         else this.previews.delete(message.memberId);
         this.redraw();
+      } else if (message.type === 'object-preview') {
+        if (message.object) this.objectPreviews.set(message.memberId, { memberId: message.memberId, object: message.object, updatedAt: Date.now() });
+        else this.objectPreviews.delete(message.memberId);
+        this.redraw();
       } else if (message.type === 'update') {
         Y.applyUpdate(this.doc, decode(message.update));
       } else if (message.type === 'saved') {
@@ -99,7 +107,7 @@ export class BoardSession {
     };
     ws.onclose = event => {
       if (ws !== this.socket) return;
-      this.members.clear(); this.previews.clear(); this.inFlight.clear(); this.redraw();
+      this.members.clear(); this.previews.clear(); this.objectPreviews.clear(); this.inFlight.clear(); this.redraw();
       if (this.stopped) return;
       if (event.code === 1008) { this.publish({ connection: 'denied', members: [], error: this.state.access?.ended ? '本次会话已结束，仍可导出本地副本' : '邀请已失效、成员已被移除或房间不可用，请联系主持人' }); return; }
       this.publish({ connection: 'offline', members: [] });
@@ -117,6 +125,26 @@ export class BoardSession {
     return [...strokes.values()];
   }
   getPreviews() { return [...this.previews.values()].filter(p => !this.doc.getMap('strokes').has(p.stroke.id) && !this.doc.getMap('deleted').has(p.stroke.id)); }
+  getObjects(): BoardObject[] {
+    const objects = new Map(this.doc.getMap<BoardObject>('objects').entries()), deleted = this.doc.getMap<boolean>('deletedObjects');
+    const applied = this.doc.getMap<boolean>('objectMutations');
+    for (const operation of this.pending.values()) {
+      if (applied.has(operation.mutationId)) continue;
+      if (operation.type === 'create-object' && !deleted.has(operation.object.id) && !objects.has(operation.object.id)) objects.set(operation.object.id, operation.object);
+      if (operation.type === 'update-object' && !deleted.has(operation.objectId) && objects.has(operation.objectId)) objects.set(operation.objectId, { ...objects.get(operation.objectId)!, ...operation.patch });
+      if (operation.type === 'delete-object') objects.delete(operation.objectId);
+    }
+    return [...objects.values()];
+  }
+  getObjectPreviews() { return [...this.objectPreviews.values()].filter(p => !this.doc.getMap('deletedObjects').has(p.object.id)); }
+  createObject(object: BoardObject) { this.mutate({ type: 'create-object', object, mutationId: newId() }); }
+  updateObject(objectId: string, patch: ObjectPatch) { this.mutate({ type: 'update-object', objectId, patch, mutationId: newId() }); }
+  deleteObject(objectId: string) { this.mutate({ type: 'delete-object', objectId, mutationId: newId() }); }
+  previewObject(object: BoardObject | null) {
+    if (this.state.connection !== 'online' || this.credentials.role !== 'editor') return;
+    if (object && performance.now() - this.lastObjectPreview < 45) return;
+    this.lastObjectPreview = performance.now(); this.send({ type: 'object-preview', object, seq: this.objectSeq++ });
+  }
   private persistQueue() {
     try { sessionStorage.setItem(this.queueKey, JSON.stringify([...this.pending.values()])); }
     catch { this.publish({ error: '本地存储空间不足，请保持页面打开并导出副本' }); }
