@@ -1,6 +1,7 @@
 import QRCode from 'qrcode';
-import { contentBounds, fitCamera, objectLayout, type AccessState, type BoardObject, type BoardSnapshot, type Credentials, type Member, type ServerMessage, type Stroke } from '@whiteboard/board-core';
+import { contentBounds, fitCamera, objectLayout, type AccessState, type BoardObject, type BoardSnapshot, type Credentials, type Member, type Point, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 import './legacy-tv.css';
+import { ImageCache } from './images';
 
 // A dedicated read-only receiver avoids loading the modern editor/Yjs runtime on old TV WebViews.
 const get = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -11,6 +12,10 @@ let snapshot: BoardSnapshot = { strokes: [], objects: [] }, members: Member[] = 
 const previews = new Map<string, { stroke: Stroke; time: number }>(), objectPreviews = new Map<string, { object: BoardObject; time: number }>();
 let overview = { left: 0, top: 0, right: 1280, bottom: 720 };
 let frame = 0, retryTimer = 0, retry = 500, stopped = false, connected = false, claimMode = false, qrKey = '', qrVersion = 0;
+let qrHidden = false, focusedMember = '';
+let focusedPoint: Point | null = null;
+const focusButton = get<HTMLButtonElement>('focus');
+const images = new ImageCache(() => credentials!, schedule);
 const room = new URL(location.href).searchParams.get('room');
 try {
   const saved = JSON.parse(localStorage.getItem('whiteboard.tv.last') || 'null') as Credentials | null;
@@ -62,6 +67,8 @@ function receive(message: ServerMessage) {
   else if (message.type === 'object-preview') { if (message.object) objectPreviews.set(message.memberId, { object: message.object, time: Date.now() }); else objectPreviews.delete(message.memberId); }
   else if (message.type === 'access') { access = message.access; updateQR(); }
   else if (message.type === 'error') status(message.message);
+  if (focusedMember && !members.some(m => m.id === focusedMember)) focusedMember = '';
+  focusButton.textContent = focusedMember ? '关注 ' + members.find(m => m.id === focusedMember)!.name : '完整画布';
   schedule();
 }
 function connect() {
@@ -87,7 +94,13 @@ create.onclick = async () => {
   } catch { get('error').textContent = '创建失败，请检查服务后重试'; create.disabled = false; create.focus(); }
 };
 claim.onclick = () => { claimMode = !claimMode; updateQR(); };
-get('fit').onclick = () => { overview = contentBounds(snapshot.strokes, snapshot.objects) || { left: 0, top: 0, right: 1280, bottom: 720 }; schedule(); };
+get('toggle-qr').onclick = () => { qrHidden = !qrHidden; get('qr-content').hidden = qrHidden; get('join').className = qrHidden ? 'panel collapsed' : 'panel'; get('toggle-qr').textContent = qrHidden ? '显示加入二维码' : '收起二维码'; get('toggle-qr').setAttribute('aria-expanded', String(!qrHidden)); schedule(); };
+focusButton.onclick = () => {
+  const options = [''].concat(members.filter(m => m.role === 'editor').map(m => m.id));
+  focusedPoint = null; focusedMember = options[(options.indexOf(focusedMember) + 1) % options.length];
+  focusButton.textContent = focusedMember ? '关注 ' + members.find(m => m.id === focusedMember)!.name : '完整画布'; schedule();
+};
+get('fit').onclick = () => { focusedMember = ''; focusedPoint = null; focusButton.textContent = '完整画布'; overview = contentBounds(snapshot.strokes, snapshot.objects) || { left: 0, top: 0, right: 1280, bottom: 720 }; schedule(); };
 function schedule() { if (!frame) frame = requestAnimationFrame(paint); }
 function stroke(s: Stroke) {
   ctx.globalAlpha = s.kind === 'marker' ? .3 : 1; ctx.strokeStyle = s.color; ctx.lineWidth = s.width; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -98,6 +111,12 @@ function stroke(s: Stroke) {
 }
 function object(o: BoardObject) {
   const layout = objectLayout(o);
+  if (o.kind === 'image') {
+    const image = images.get(o.assetId); ctx.fillStyle = '#e9edf5'; ctx.fillRect(o.x, o.y, o.width, o.height);
+    if (image) ctx.drawImage(image, o.x, o.y, o.width, o.height);
+    else { ctx.font = '16px sans-serif'; ctx.fillStyle = '#667085'; ctx.fillText('图片加载中…', o.x + 12, o.y + 24); }
+    return;
+  }
   if (o.kind === 'note') { ctx.fillStyle = '#FFF1AD'; ctx.fillRect(o.x, o.y, layout.width, layout.height); ctx.fillStyle = '#E9CF6D'; ctx.fillRect(o.x, o.y, layout.width, 6); }
   ctx.font = '24px monospace'; ctx.textBaseline = 'top'; ctx.fillStyle = o.kind === 'note' ? '#3B3525' : o.color;
   layout.lines.forEach((line, i) => ctx.fillText(line, o.x + 24, o.y + 24 + i * 34));
@@ -110,7 +129,13 @@ function paint() {
   const bounds = contentBounds(snapshot.strokes.concat(active), snapshot.objects.concat(activeObjects));
   if (bounds) overview = { left: Math.min(overview.left, bounds.left), top: Math.min(overview.top, bounds.top), right: Math.max(overview.right, bounds.right), bottom: Math.max(overview.bottom, bounds.bottom) };
   const b = overview;
-  const camera = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], { width: Math.max(100, width - 290), height }, 110);
+  const camera = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], { width: Math.max(100, width - (qrHidden ? 0 : 290)), height: Math.max(100, height - 180) }, 32);
+  camera.y += 110;
+  const focused = members.find(m => m.id === focusedMember);
+  if (focused?.cursor) focusedPoint = focused.cursor;
+  if (!focused) focusedPoint = null;
+  const cursor = focusedPoint;
+  if (cursor) { camera.zoom = 1; camera.x = (width - (qrHidden ? 0 : 290)) / 2 - cursor.x; camera.y = height / 2 - cursor.y; }
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0); ctx.clearRect(0, 0, width, height);
   ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
   const previewIds = new Set(activeObjects.map(o => o.id));
@@ -125,6 +150,7 @@ function paint() {
     ctx.font = '18px sans-serif'; const w = ctx.measureText(member.name).width + 18; ctx.fillRect(x + 18, y + 26, w, 32); ctx.fillStyle = '#fff'; ctx.textBaseline = 'top'; ctx.fillText(member.name, x + 27, y + 32);
   });
   get('empty').hidden = !credentials || snapshot.strokes.length + snapshot.objects.length + active.length + activeObjects.length > 0;
+  canvas.dataset.viewWidth = String(width - (qrHidden ? 0 : 290)); canvas.dataset.camera = JSON.stringify(camera); canvas.dataset.joinVisible = String(!qrHidden); canvas.dataset.focusedMember = focusedMember; canvas.dataset.loadedImageCount = String(images.loaded);
   canvas.dataset.strokeCount = String(snapshot.strokes.length); canvas.dataset.objectCount = String(snapshot.objects.length);
   canvas.dataset.previewCount = String(active.length); canvas.dataset.objectPreviewCount = String(activeObjects.length);
   canvas.dataset.cursorCount = String(members.filter(m => m.cursor).length);

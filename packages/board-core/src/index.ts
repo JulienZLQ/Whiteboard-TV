@@ -2,13 +2,20 @@ export type Point = { x: number; y: number };
 export type Camera = Point & { zoom: number };
 export type Size = { width: number; height: number };
 export type Stroke = { id: string; points: number[]; color: string; width: number; kind: 'pen' | 'marker' };
-export type BoardObject = { id: string; kind: 'text' | 'note'; x: number; y: number; text: string; color: string };
-export type ObjectPatch = { text: string } | { x: number; y: number };
+export type TextObject = { id: string; kind: 'text' | 'note'; x: number; y: number; text: string; color: string };
+export type ImageObject = { id: string; kind: 'image'; x: number; y: number; assetId: string; width: number; height: number };
+export type BoardObject = TextObject | ImageObject;
+export const IMAGE_LIMITS = { bytes: 1024 * 1024, edge: 1280, assets: 20 };
+export function validAssetId(id: unknown): id is string { return typeof id === 'string' && /^[a-f0-9]{64}$/.test(id); }
+export function validImageSize(value: unknown): value is Size { const s = value as Size; return !!s && Number.isFinite(s.width) && Number.isFinite(s.height) && s.width >= 16 && s.height >= 16 && s.width <= 4000 && s.height <= 4000; }
+export type ObjectPatch = { text: string } | { x: number; y: number } | { width: number; height: number };
 export type ObjectPreview = { memberId: string; object: BoardObject; updatedAt: number };
 export const OBJECT_LIMITS = { count: 500, text: 500, mutations: 10_000 };
 export function validId(id: unknown): id is string { return typeof id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(id); }
 export function validObject(value: unknown): value is BoardObject {
-  const o = value as BoardObject;
+  const image = value as ImageObject;
+  if (image?.kind === 'image') return validId(image.id) && validPoint(image) && validAssetId(image.assetId) && validImageSize(image);
+  const o = value as TextObject;
   return !!o && validId(o.id) && (o.kind === 'text' || o.kind === 'note') && validPoint(o)
     && typeof o.text === 'string' && o.text.length <= OBJECT_LIMITS.text && !/[\u0000-\u0008\u000b-\u001f]/.test(o.text)
     && typeof o.color === 'string' && /^#[a-fA-F0-9]{6}$/.test(o.color);
@@ -17,10 +24,12 @@ export function validObjectPatch(value: unknown): value is ObjectPatch {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const p = value as Record<string, unknown>, keys = Object.keys(p);
   return (keys.length === 1 && typeof p.text === 'string' && p.text.length <= OBJECT_LIMITS.text && !/[\u0000-\u0008\u000b-\u001f]/.test(p.text))
-    || (keys.length === 2 && keys.includes('x') && keys.includes('y') && validPoint(p));
+    || (keys.length === 2 && keys.includes('x') && keys.includes('y') && validPoint(p))
+    || (keys.length === 2 && keys.includes('width') && keys.includes('height') && validImageSize(p));
 }
 // Fixed-width typography keeps wrapping and overview bounds deterministic on every client.
 export function objectLayout(object: BoardObject) {
+  if (object.kind === 'image') return { width: object.width, height: object.height, lines: [] as string[] };
   const lines: string[] = []; let line = '', width = 0;
   for (const char of object.text) {
     if (char === '\n') { lines.push(line); line = ''; width = 0; continue; }

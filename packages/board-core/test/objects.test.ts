@@ -18,3 +18,13 @@ test('text wrapping preserves newlines and emoji, and complete object bounds ent
   assert.ok(layout.height > 200);
   assert.deepEqual(contentBounds([], [object]), { left: -100, top: 200, right: 220, bottom: 400 });
 });
+
+test('image objects use bounded geometry and cannot carry arbitrary external URLs', () => {
+  const image = { id: 'image-0001', kind: 'image' as const, assetId: 'a'.repeat(64), x: -300, y: 10, width: 600, height: 400 };
+  assert.ok(validObject(image)); assert.ok(validObjectPatch({ width: 300, height: 200 }));
+  assert.equal(validObject({ ...image, assetId: 'https://example.com/image.png' }), false);
+  assert.equal(validObject({ ...image, width: 4001 }), false);
+  assert.equal(validObject({ ...image, height: 0 }), false);
+  assert.equal(validObjectPatch({ width: 300 }), false);
+  assert.deepEqual(contentBounds([], [image]), { left: -300, top: 10, right: 300, bottom: 410 });
+});

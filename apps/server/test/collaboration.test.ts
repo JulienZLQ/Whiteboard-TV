@@ -182,11 +182,52 @@ test('legacy TV receives snapshots and previews with forced viewer permissions',
     assert.equal(tv.ready.role, 'viewer'); assert.equal(tv.ready.update, ''); assert.deepEqual(tv.ready.snapshot?.strokes, []);
     tv.send({ type: 'commit', stroke, mutationId: 'legacy-write-denied' }); assert.match((await tv.wait('error')).message, /仅可观看/);
     const object = { id: 'legacy-note-01', kind: 'note' as const, x: 100, y: 100, text: '旧电视同步', color: '#315EFB' };
-    editor.send({ type: 'object-preview', object, seq: 1 }); assert.equal((await tv.wait('object-preview', m => !!m.object)).object?.text, object.text);
+    editor.send({ type: 'object-preview', object, seq: 1 }); assert.deepEqual((await tv.wait('object-preview', m => !!m.object)).object, object);
     editor.send({ type: 'commit', stroke, mutationId: 'legacy-stroke-save' }); await editor.wait('saved');
     editor.send({ type: 'create-object', object, mutationId: 'legacy-note-save' }); await editor.wait('saved');
     const saved = await tv.wait('snapshot', m => m.objects.length === 1); assert.equal(saved.strokes.length, 1);
     editor.send({ type: 'delete-object', objectId: object.id, mutationId: 'legacy-note-delete' }); await editor.wait('saved');
     const deleted = await tv.wait('snapshot', m => m.objects.length === 0); assert.ok(deleted.deletedObjectIds?.includes(object.id));
+  } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('images require room credentials, persist with geometry, reject wrong-kind patches and revoke removed access', async () => {
+  const { png } = await import('./image-fixture');
+  const directory = await mkdtemp(join(tmpdir(), 'whiteboard-image-http-'));
+  let app = createWhiteboardServer({ dataDir: directory }), port = await app.listen(0);
+  const clients: Awaited<ReturnType<typeof client>>[] = [];
+  try {
+    const room = await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    const host = await client(port, room, 'Host'), guest = await client(port, { ...room, token: host.ready.access!.inviteToken }, 'Guest'); clients.push(host, guest);
+    const path = () => `http://127.0.0.1:${port}/api/rooms/${room.roomId}/images`;
+    const upload = (token: string, body = png()) => fetch(path(), { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'X-Whiteboard-Client': '1', 'Content-Type': 'image/png' }, body });
+    assert.equal((await upload(room.viewerToken!)).status, 403);
+    assert.equal((await upload(host.ready.access!.inviteToken)).status, 403);
+    assert.equal((await upload(room.token, Buffer.from('<svg/>'))).status, 400);
+    const response = await upload(guest.ready.token!); assert.equal(response.status, 201);
+    const asset = await response.json() as { assetId: string; width: number; height: number };
+    const read = (token: string) => fetch(path() + '/' + asset.assetId, { headers: { Authorization: 'Bearer ' + token } });
+    assert.equal((await read('')).status, 403); assert.equal((await read('x'.repeat(64))).status, 403);
+    assert.deepEqual(Buffer.from(await (await read(room.viewerToken!)).arrayBuffer()), png());
+    const other = await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    assert.equal((await read(other.token)).status, 403);
+    const object = { id: 'image-object-01', kind: 'image' as const, x: 100, y: 200, ...asset };
+    host.send({ type: 'create-object', object: { ...object, assetId: 'f'.repeat(64) }, mutationId: 'missing-image-asset' }); await host.wait('error');
+    host.send({ type: 'create-object', object, mutationId: 'create-image-asset' }); await host.wait('saved');
+    host.send({ type: 'update-object', objectId: object.id, patch: { text: 'invalid' }, mutationId: 'image-text-denied' }); await host.wait('error');
+    host.send({ type: 'update-object', objectId: object.id, patch: { width: 320, height: 240 }, mutationId: 'image-size-update' }); await host.wait('saved');
+    guest.send({ type: 'update-object', objectId: object.id, patch: { x: 500, y: 600 }, mutationId: 'image-move-update' }); await guest.wait('saved');
+    assert.deepEqual(host.doc.getMap('objects').get(object.id), { ...object, x: 500, y: 600, width: 320, height: 240 });
+    host.send({ type: 'manage', action: 'remove', memberId: guest.ready.memberId }); await host.wait('access', m => m.access.inviteToken !== host.ready.access!.inviteToken);
+    assert.equal((await read(guest.ready.token!)).status, 403); assert.equal((await upload(guest.ready.token!)).status, 403);
+    for (const c of clients) c.ws.terminate(); await app.close(); app = createWhiteboardServer({ dataDir: directory }); port = await app.listen(0);
+    assert.deepEqual(Buffer.from(await (await read(room.viewerToken!)).arrayBuffer()), png());
+    const restored = await client(port, room, 'Restored'); clients.push(restored);
+    assert.equal((restored.doc.getMap('objects').get(object.id) as { width: number }).width, 320);
+    restored.send({ type: 'delete-object', objectId: object.id, mutationId: 'image-delete-01' }); await restored.wait('saved');
+    restored.send({ type: 'update-object', objectId: object.id, patch: { width: 100, height: 100 }, mutationId: 'image-resize-late' }); await restored.wait('saved');
+    assert.equal(restored.doc.getMap('objects').has(object.id), false);
+    restored.send({ type: 'manage', action: 'end' }); await restored.wait('access', m => m.access.ended);
+    assert.equal((await read(room.viewerToken!)).status, 403);
   } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
 });

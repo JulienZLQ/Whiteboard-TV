@@ -1,5 +1,6 @@
 import Konva from 'konva';
-import { fitCamera, contentBounds, contentFrame, objectLayout, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke, type BoardObject } from '@whiteboard/board-core';
+import { fitCamera, contentBounds, contentFrame, objectLayout, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke, type BoardObject, type TextObject, type ImageObject } from '@whiteboard/board-core';
+import { ImageCache } from '../images';
 import { BoardSession, newId } from '../session';
 
 export type Tool = 'hand' | 'pen' | 'marker' | 'eraser' | 'select' | 'text' | 'note';
@@ -11,6 +12,9 @@ export class BoardEngine {
   private objectNodes = new Map<string, Konva.Group>();
   private objectRefs = new Map<string, BoardObject>();
   private selected = '';
+  private images: ImageCache;
+  private joinVisible = true;
+  private resizing: { origin: ImageObject; current: ImageObject; start: Point } | null = null;
   private placing: BoardObject | null = null;
   private dragging: { origin: BoardObject; start: Point; current: BoardObject } | null = null;
   private overlay = new Konva.Group();
@@ -30,10 +34,12 @@ export class BoardEngine {
   private moved = false;
   private overview = { left: 0, top: 0, right: 1280, bottom: 720 };
   private focusedMember = '';
+  private focusedPoint: Point | null = null;
   private lastFrame = 0;
   tool: Tool = 'pen';
   color: string = COLORS[0];
-  constructor(private element: HTMLDivElement, private session: BoardSession, private viewer: boolean, private onCamera: (camera: Camera) => void, private onSelection: (id: string) => void, private onEdit: (object: BoardObject) => void) {
+  constructor(private element: HTMLDivElement, private session: BoardSession, private viewer: boolean, private onCamera: (camera: Camera) => void, private onSelection: (id: string) => void, private onEdit: (object: TextObject) => void) {
+    this.images = new ImageCache(() => session.credentials, () => { this.objectRefs.clear(); this.schedule(); });
     Konva.pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     this.stage = new Konva.Stage({ container: element, width: element.clientWidth, height: element.clientHeight });
     this.layer = new Konva.Layer({ listening: false }); this.stage.add(this.layer);
@@ -53,14 +59,14 @@ export class BoardEngine {
     element.addEventListener('wheel', this.wheel, { signal, passive: false });
     this.schedule();
   }
-  private viewSize() { return { width: this.stage.width() - (this.viewer && this.stage.width() >= 900 ? 270 : 0), height: this.stage.height() }; }
+  private viewSize() { return { width: this.stage.width() - (this.viewer && this.joinVisible && this.stage.width() >= 900 ? 270 : 0), height: this.stage.height() }; }
   private local(event: PointerEvent): Point { const r = this.element.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
   private down = (event: PointerEvent) => {
     if (event.button !== 0 || this.viewer || this.session.getSnapshot().connection === 'denied') return;
     event.preventDefault();
     this.element.setPointerCapture(event.pointerId);
     const point = this.local(event); this.pointers.set(event.pointerId, point);
-    if (this.pointers.size > 1) { this.drawing = null; this.placing = null; this.dragging = null; this.session.previewObject(null); this.session.preview(null); this.gesture = true; this.pinchDistance = 0; this.schedule(); return; }
+    if (this.pointers.size > 1) { this.drawing = null; this.placing = null; this.dragging = null; this.resizing = null; this.session.previewObject(null); this.session.preview(null); this.gesture = true; this.pinchDistance = 0; this.schedule(); return; }
     this.previous = point;
     this.moved = true;
     if (this.gesture) return;
@@ -68,8 +74,13 @@ export class BoardEngine {
     if (this.tool === 'pen' || this.tool === 'marker') this.drawing = { id: newId(), points: [world.x, world.y], color: this.color, width: this.tool === 'marker' ? 22 : 4, kind: this.tool };
     if (this.tool === 'eraser') this.eraseAt(world);
     if (this.tool === 'select') {
-      const object = this.hitObject(world); this.select(object?.id ?? '');
-      if (object) this.dragging = { origin: object, current: object, start: world };
+      const selected = this.session.getObjects().find(o => o.id === this.selected);
+      if (selected?.kind === 'image' && Math.abs(world.x - selected.x - selected.width) * this.camera.zoom <= 20 && Math.abs(world.y - selected.y - selected.height) * this.camera.zoom <= 20) {
+        this.resizing = { origin: selected, current: selected, start: world };
+      } else {
+        const object = this.hitObject(world); this.select(object?.id ?? '');
+        if (object) this.dragging = { origin: object, current: object, start: world };
+      }
     }
     if (this.tool === 'text' || this.tool === 'note') this.placing = { id: newId(), kind: this.tool, x: world.x, y: world.y, text: '', color: this.color };
     this.session.presence(world); this.schedule();
@@ -99,6 +110,12 @@ export class BoardEngine {
         this.drawing = { ...this.drawing, id: newId(), points: points.slice(-2) };
       }
       this.drawing.points.push(world.x, world.y); this.session.preview(this.drawing);
+    } else if (this.resizing) {
+      const { origin, start } = this.resizing;
+      const factor = ((world.x - start.x) * origin.width + (world.y - start.y) * origin.height) / (origin.width ** 2 + origin.height ** 2) + 1;
+      const size = this.imageScale(origin, factor);
+      const latest = this.session.getObjects().find(o => o.id === origin.id);
+      if (latest?.kind === 'image') { this.resizing.current = { ...latest, ...size }; this.session.previewObject(this.resizing.current); }
     } else if (this.dragging) {
       const { origin, start } = this.dragging;
       if (Math.hypot(world.x - start.x, world.y - start.y) * this.camera.zoom >= 3) {
@@ -119,9 +136,13 @@ export class BoardEngine {
       const { origin, current } = this.dragging;
       if (current.x !== origin.x || current.y !== origin.y) this.session.updateObject(origin.id, { x: current.x, y: current.y });
     }
+    if (!this.gesture && this.resizing) {
+      const { origin, current } = this.resizing;
+      if (current.width !== origin.width || current.height !== origin.height) this.session.updateObject(origin.id, { width: current.width, height: current.height });
+    }
     const placing = !this.gesture ? this.placing : null;
-    this.placing = null; this.dragging = null; this.session.previewObject(null);
-    if (placing) this.onEdit(placing);
+    this.placing = null; this.dragging = null; this.resizing = null; this.session.previewObject(null);
+    if (placing && placing.kind !== 'image') this.onEdit(placing);
     this.drawing = null; this.session.preview(null); this.pointers.delete(event.pointerId);
     if (!this.pointers.size) { this.gesture = false; this.previous = null; }
     this.pinchDistance = 0; this.pinchCenter = null;
@@ -130,7 +151,7 @@ export class BoardEngine {
   };
   private cancel = (event: PointerEvent) => {
     if (!this.pointers.has(event.pointerId)) return;
-    this.drawing = null; this.placing = null; this.dragging = null; this.session.previewObject(null); this.session.preview(null); this.pointers.delete(event.pointerId);
+    this.drawing = null; this.placing = null; this.dragging = null; this.resizing = null; this.session.previewObject(null); this.session.preview(null); this.pointers.delete(event.pointerId);
     if (!this.pointers.size) this.gesture = false;
     this.pinchDistance = 0; this.pinchCenter = null; this.session.presence(null); this.schedule();
   };
@@ -147,11 +168,18 @@ export class BoardEngine {
     if (this.viewer || this.tool !== 'select' || this.session.getSnapshot().connection === 'denied') return;
     const rect = this.element.getBoundingClientRect();
     const object = this.hitObject(screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, this.camera));
-    if (object) this.onEdit(object);
+    if (object && object.kind !== 'image') this.onEdit(object);
   };
   select(id: string) { if (id !== this.selected) { this.selected = id; this.onSelection(id); this.schedule(); } }
   private objectNode(object: BoardObject, draft = false) {
     const layout = objectLayout(object), node = new Konva.Group({ x: object.x, y: object.y, opacity: draft ? .82 : 1 });
+    if (object.kind === 'image') {
+      const image = this.images.get(object.assetId);
+      node.add(new Konva.Rect({ width: layout.width, height: layout.height, fill: '#e9edf5', stroke: '#d0d8e7', strokeWidth: 1 }));
+      if (image) node.add(new Konva.Image({ image, width: layout.width, height: layout.height }));
+      else node.add(new Konva.Text({ x: 12, y: 12, text: '图片加载中…', fontSize: 16, fill: '#667085' }));
+      return node;
+    }
     if (object.kind === 'note') {
       node.add(new Konva.Rect({ width: layout.width, height: layout.height, fill: '#FFF1AD', cornerRadius: 6, shadowColor: '#493d13', shadowOpacity: .12, shadowBlur: 10, shadowOffsetY: 4 }));
       node.add(new Konva.Rect({ width: layout.width, height: 6, fill: '#E9CF6D', cornerRadius: [6, 6, 0, 0] }));
@@ -186,7 +214,10 @@ export class BoardEngine {
       if (bounds) this.overview = { left: Math.min(this.overview.left, bounds.left), top: Math.min(this.overview.top, bounds.top), right: Math.max(this.overview.right, bounds.right), bottom: Math.max(this.overview.bottom, bounds.bottom) };
       const b = this.overview;
       const target = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], this.viewSize());
-      const cursor = this.session.members.get(this.focusedMember)?.cursor;
+      const member = this.session.members.get(this.focusedMember);
+      if (member?.cursor) this.focusedPoint = member.cursor;
+      if (!member) this.focusedPoint = null;
+      const cursor = this.focusedPoint;
       if (cursor) { target.zoom = 1; target.x = this.viewSize().width / 2 - cursor.x; target.y = this.stage.height() / 2 - cursor.y; }
       const now = performance.now(), alpha = 1 - Math.exp(-Math.min(32, now - this.lastFrame) / 65); this.lastFrame = now;
       const moving = Math.abs(target.x - this.camera.x) > .1 || Math.abs(target.y - this.camera.y) > .1 || Math.abs(target.zoom - this.camera.zoom) > .0001;
@@ -210,6 +241,7 @@ export class BoardEngine {
     for (const [id, node] of this.objectNodes) if (!objectIds.has(id)) { node.destroy(); this.objectNodes.delete(id); this.objectRefs.delete(id); }
     const previewIds = new Set(objectPreviews.map(p => p.object.id));
     if (this.dragging) previewIds.add(this.dragging.origin.id);
+    if (this.resizing) previewIds.add(this.resizing.origin.id);
     objects.forEach((object, index) => {
       if (this.objectRefs.get(object.id) !== object) {
         this.objectNodes.get(object.id)?.destroy();
@@ -224,11 +256,13 @@ export class BoardEngine {
     if (this.drawing) previewGroup.add(this.line(this.drawing));
     for (const preview of objectPreviews) previewGroup.add(this.objectNode(preview.object, true));
     if (this.dragging && objectIds.has(this.dragging.origin.id)) previewGroup.add(this.objectNode(this.dragging.current));
-    const selected = this.dragging?.current ?? objects.find(o => o.id === this.selected);
+    if (this.resizing && objectIds.has(this.resizing.origin.id)) previewGroup.add(this.objectNode(this.resizing.current));
+    const selected = this.resizing?.current ?? this.dragging?.current ?? objects.find(o => o.id === this.selected);
     if (selected && objectIds.has(selected.id)) {
       const size = objectLayout(selected);
       previewGroup.add(new Konva.Rect({ x: selected.x, y: selected.y, width: size.width, height: size.height, stroke: '#315EFB', strokeWidth: 2 / this.camera.zoom, dash: [6 / this.camera.zoom, 4 / this.camera.zoom], cornerRadius: 6 }));
     }
+    if (selected?.kind === 'image' && objectIds.has(selected.id)) previewGroup.add(new Konva.Rect({ x: selected.x + selected.width - 8 / this.camera.zoom, y: selected.y + selected.height - 8 / this.camera.zoom, width: 16 / this.camera.zoom, height: 16 / this.camera.zoom, fill: '#315EFB', stroke: 'white', strokeWidth: 2 / this.camera.zoom, cornerRadius: 3 / this.camera.zoom }));
     for (const member of this.session.members.values()) {
       if (member.id === this.session.getSnapshot().memberId || !member.cursor) continue;
       const x = member.cursor.x * this.camera.zoom + this.camera.x, y = member.cursor.y * this.camera.zoom + this.camera.y;
@@ -239,6 +273,8 @@ export class BoardEngine {
       label.add(new Konva.Text({ text: member.name, padding: 8, fill: '#fff', fontSize: this.viewer ? 20 : 14, fontFamily: 'sans-serif' }));
       cursor.add(label); this.overlay.add(cursor);
     }
+    this.element.dataset.loadedImageCount = String(this.images.loaded);
+    this.element.dataset.joinVisible = String(this.joinVisible);
     this.element.dataset.objectCount = String(objects.length);
     this.element.dataset.objectPreviewCount = String(objectPreviews.length);
     this.element.dataset.selectedObject = this.selected;
@@ -250,8 +286,20 @@ export class BoardEngine {
     this.element.style.backgroundPosition = `${this.camera.x}px ${this.camera.y}px`;
     this.onCamera({ ...this.camera }); this.layer.batchDraw();
   };
+  setJoinVisible(visible: boolean) { this.joinVisible = visible; this.schedule(); }
+  private imageScale(image: ImageObject, factor: number) { const value = Math.max(16 / Math.min(image.width, image.height), Math.min(4000 / Math.max(image.width, image.height), factor)); return { width: image.width * value, height: image.height * value }; }
+  scaleSelected(factor: number) { const image = this.session.getObjects().find(o => o.id === this.selected); if (image?.kind === 'image') this.session.updateObject(image.id, this.imageScale(image, factor)); }
+  placeImage(asset: { assetId: string; width: number; height: number }) {
+    const ratio = asset.width / asset.height;
+    if (ratio > 250 || ratio < 1 / 250) throw new Error('图片过于狭长，请先裁剪');
+    const scale = Math.max(16 / Math.min(asset.width, asset.height), Math.min(1, 480 / Math.max(asset.width, asset.height)));
+    const width = asset.width * scale, height = asset.height * scale;
+    const center = screenToWorld({ x: this.stage.width() / 2, y: this.stage.height() * .42 }, this.camera);
+    const object: ImageObject = { id: newId(), kind: 'image', assetId: asset.assetId, width, height, x: Math.max(-LIMITS.coordinate, Math.min(LIMITS.coordinate, center.x - width / 2)), y: Math.max(-LIMITS.coordinate, Math.min(LIMITS.coordinate, center.y - height / 2)) };
+    this.moved = true; this.session.createObject(object); this.select(object.id);
+  }
   zoom(factor: number) { if (!this.viewer) { this.camera = zoomAt(this.camera, { x: this.stage.width() / 2, y: this.stage.height() / 2 }, factor); this.moved = true; this.schedule(); } }
-  focus(memberId: string) { this.focusedMember = memberId; this.schedule(); }
-  fit() { this.focusedMember = ''; this.overview = contentBounds(this.session.getStrokes(), this.session.getObjects()) ?? { left: 0, top: 0, right: 1280, bottom: 720 }; this.camera = fitCamera(contentFrame(this.session.getStrokes(), this.session.getObjects()), this.viewSize()); this.moved = true; this.schedule(); }
-  destroy() { cancelAnimationFrame(this.frame); this.resize.disconnect(); this.unsubscribe(); this.events.abort(); this.stage.destroy(); }
+  focus(memberId: string) { this.focusedMember = memberId; this.focusedPoint = null; this.schedule(); }
+  fit() { this.focusedMember = ''; this.focusedPoint = null; this.overview = contentBounds(this.session.getStrokes(), this.session.getObjects()) ?? { left: 0, top: 0, right: 1280, bottom: 720 }; this.camera = fitCamera(contentFrame(this.session.getStrokes(), this.session.getObjects()), this.viewSize()); this.moved = true; this.schedule(); }
+  destroy() { this.images.destroy(); cancelAnimationFrame(this.frame); this.resize.disconnect(); this.unsubscribe(); this.events.abort(); this.stage.destroy(); }
 }

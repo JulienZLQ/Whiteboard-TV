@@ -75,3 +75,7 @@ UUID 或等价随机 ID；不使用数组下标作为对象身份。对象按 ID
 ## 旧电视接收协议
 
 hello.legacyTV=true 强制 viewer。ready.snapshot 和 snapshot 消息包含 strokes、objects、deletedStrokeIds、deletedObjectIds；不向兼容客户端发送 Yjs update。持久变更按连接合并为约 100ms 一次完整快照，过程预览和成员通道仍实时发送。主编辑器协议不变。
+
+## M3 图片扩展（已实现）
+
+图片作为 `kind: image` 对象加入现有 create/update/delete-object 通道，尺寸补丁与位置补丁分字段持久化。文件通过带房间凭证的 HTTP 接口存储读取，不进入 Yjs 增量或电视 JSON 快照。对象模型、限额、上传校验、导出 v3 与旧客户端更新要求见 [图片扩展](13-images-tv-view.md)。

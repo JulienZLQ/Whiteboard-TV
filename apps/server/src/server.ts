@@ -4,7 +4,8 @@ import { resolve, extname, sep } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as Y from 'yjs';
-import { COLORS, LIMITS, OBJECT_LIMITS, validId, validObject, validObjectPatch, validPoint, validStroke, type BoardObject, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
+import { COLORS, IMAGE_LIMITS, validAssetId, LIMITS, OBJECT_LIMITS, validId, validObject, validObjectPatch, validPoint, validStroke, type BoardObject, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
+import { ImageStore } from './images';
 import { RoomStore, secret, type Room } from './store';
 
 type Peer = { legacyTV: boolean; snapshotTimer?: ReturnType<typeof setTimeout>; room: Room; member: Member; token: string; previewSeq: number; objectSeq: number; alive: boolean };
@@ -14,12 +15,13 @@ const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js
 export function createWhiteboardServer(options: { dataDir: string; webRoot?: string }) {
   const store = new RoomStore(options.dataDir);
   const peers = new Map<WebSocket, Peer>();
-  let creating = 0;
+  const images = new ImageStore(options.dataDir);
+  let creating = 0, uploading = 0;
   const server = createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M3-text"}'); return; }
+    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M3-images"}'); return; }
     if (url.pathname === '/api/rooms' && req.method === 'POST') {
       // JSON/custom-header requirement blocks ordinary cross-origin forms; no CORS is enabled.
       if (req.headers['x-whiteboard-client'] !== '1' || creating >= 4) { res.writeHead(403).end(); return; }
@@ -30,6 +32,41 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
         res.writeHead(201).end(JSON.stringify({ roomId: room.id, token: room.editorToken, viewerToken: room.viewerToken, role: url.searchParams.get('mode') === 'tv' ? 'viewer' : 'editor' }));
       } catch { res.writeHead(503).end(JSON.stringify({ error: '无法创建房间，请稍后重试' })); }
       finally { creating--; }
+      return;
+    }
+    const imageRoute = /^\/api\/rooms\/([a-f0-9]{24})\/images(?:\/([a-f0-9]{64}))?$/.exec(url.pathname);
+    if (imageRoute) {
+      res.setHeader('Cache-Control', 'no-store');
+      let room: Room;
+      const token = (req.headers.authorization || '').replace(/^Bearer /, '');
+      try { room = await store.get(imageRoute[1]); } catch { res.writeHead(404).end(); return; }
+      const canEdit = /^[a-f0-9]{64}$/.test(token) && (matches(token, room.access.hostToken) || room.access.editors.includes(token));
+      const allowed = /^[a-f0-9]{64}$/.test(token) && !room.access.ended && (canEdit || matches(token, room.viewerToken));
+      if (!allowed) { res.writeHead(403).end(); return; }
+      if (req.method === 'GET' && imageRoute[2]) {
+        try { const bytes = await images.get(room.id, imageRoute[2]); res.setHeader('Content-Type', 'image/png'); res.end(bytes); }
+        catch { res.writeHead(404).end(); }
+        return;
+      }
+      if (req.method !== 'POST' || imageRoute[2]) { res.writeHead(405).end(); return; }
+      if (!canEdit || req.headers['x-whiteboard-client'] !== '1' || req.headers['content-type'] !== 'image/png') { res.writeHead(403).end(); return; }
+      if (uploading >= 4) { res.writeHead(429).end(); return; }
+      if (Number(req.headers['content-length']) > IMAGE_LIMITS.bytes) { res.writeHead(413).end(); return; }
+      uploading++;
+      req.setTimeout(15000, () => req.destroy());
+      try {
+        const chunks: Buffer[] = []; let length = 0;
+        for await (const chunk of req) { length += chunk.length; if (length > IMAGE_LIMITS.bytes) { res.writeHead(413).end(); return; } chunks.push(chunk); }
+        // Serialize uploads with room management so revocation/end cannot race a write.
+        const task = room.queue.then(async () => {
+          if (room.access.ended || !(matches(token, room.access.hostToken) || room.access.editors.includes(token))) throw new Error('会话权限已失效');
+          return images.put(room.id, Buffer.concat(chunks));
+        });
+        room.queue = task.then(() => {}, () => {});
+        const asset = await task;
+        res.setHeader('Content-Type', 'application/json'); res.writeHead(201).end(JSON.stringify(asset));
+      } catch (error) { if (!res.headersSent) res.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : '图片上传失败' })); }
+      finally { uploading--; req.setTimeout(0); }
       return;
     }
     if (url.pathname.startsWith('/api/')) { res.writeHead(404).end(); return; }
@@ -172,10 +209,16 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
               const id = operation.type === 'create-object' ? operation.object.id : operation.objectId;
               if (operation.type === 'create-object' && !objects.has(id) && !deleted.has(id)) {
                 if (objects.size >= OBJECT_LIMITS.count) throw new Error('文字与便签数量已达预览版本上限');
-                const { kind, x, y, text, color } = operation.object;
-                objects.set(id, { id, kind, x, y, text, color });
+                const object = operation.object;
+                if (object.kind === 'image') {
+                  if (!validAssetId(object.assetId) || !await images.exists(room.id, object.assetId)) throw new Error('图片尚未上传或不存在');
+                  const { x, y, assetId, width, height } = object;
+                  objects.set(id, { id, kind: 'image', x, y, assetId, width, height });
+                } else { const { kind, x, y, text, color } = object; objects.set(id, { id, kind, x, y, text, color }); }
               } else if (operation.type === 'update-object' && objects.has(id) && !deleted.has(id)) {
-                objects.set(id, { ...objects.get(id)!, ...operation.patch });
+                const current = objects.get(id)!;
+                if (('text' in operation.patch && current.kind === 'image') || ('width' in operation.patch && current.kind !== 'image')) throw new Error('对象不支持此操作');
+                objects.set(id, { ...current, ...operation.patch });
               } else if (operation.type === 'delete-object') { deleted.set(id, true); objects.delete(id); }
               applied.set(operation.mutationId, true);
               await store.save(room, candidate);
