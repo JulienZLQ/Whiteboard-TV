@@ -2,6 +2,14 @@ package com.whiteboardtv.app;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public class ServerAddressTest {
+    @Test public void embeddedOriginIsAllowedOnlyForTheFixedLocalEndpoint() {
+        String local = "http://127.0.0.1:8787", id = "0123456789abcdef01234567";
+        assertTrue(ServerAddress.sameOrigin(local, local + "/api/health"));
+        assertFalse(ServerAddress.sameOrigin(local, "http://127.0.0.1:9999/"));
+        assertFalse(ServerAddress.sameOrigin(local, "http://127.0.0.1.evil:8787/"));
+        assertFalse(ServerAddress.sameOrigin(local, "http://user@127.0.0.1:8787/"));
+        assertEquals(local + "/?room=" + id + "&mode=tv&tvShell=android", ServerAddress.resumeUrl(local, local + "/legacy-tv.html?room=" + id));
+    }
     @Test public void normalizesOriginsAndPorts() {
         assertEquals("http://192.168.1.20:8787", ServerAddress.normalize(" 192.168.1.20:8787/ "));
         assertEquals("https://board.example.com", ServerAddress.normalize("https://BOARD.example.com:443"));

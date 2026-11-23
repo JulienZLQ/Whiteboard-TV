@@ -6,6 +6,7 @@ import java.util.Locale;
 /** Only an origin is configurable. Invitations and credentials never enter preferences. */
 public final class ServerAddress {
     private ServerAddress() {}
+    private static final class LocalOrigin { static final String VALUE = "http://127.0.0.1:8787"; }
     public static String normalize(String input) {
         if (input == null) throw new IllegalArgumentException("请输入服务地址");
         String value = input.trim();
@@ -30,6 +31,7 @@ public final class ServerAddress {
             URI uri = new URI(value);
             if (uri.getRawUserInfo() != null || uri.getHost() == null) return false;
             String candidate = new URI(uri.getScheme(), null, uri.getHost(), uri.getPort(), null, null, null).toString();
+            if (LocalOrigin.VALUE.equals(origin)) return candidate.equals(origin);
             return normalize(candidate).equals(origin);
         } catch (Exception e) { return false; }
     }

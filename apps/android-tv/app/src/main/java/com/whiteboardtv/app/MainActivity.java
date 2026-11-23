@@ -46,16 +46,31 @@ public final class MainActivity extends Activity {
     private int requestVersion;
     private Dialog menu;
     private Dialog exitConfirmation;
+    private boolean localBound;
+    private final android.os.Messenger localMessages = new android.os.Messenger(new android.os.Handler(android.os.Looper.getMainLooper(), message -> {
+        if (isFinishing() || isDestroyed()) return true;
+        if (message.what == LocalServerService.READY) openBoard(ServerAddress.resumeUrl(origin, preferences.getString("localRoomUrl", "")));
+        else if (message.what == LocalServerService.ERROR) showFailure(message.getData().getString("error", "本地服务启动失败"));
+        return true;
+    }));
+    private final android.content.ServiceConnection localConnection = new android.content.ServiceConnection() {
+        @Override public void onServiceConnected(android.content.ComponentName name, android.os.IBinder binder) {
+            try { android.os.Message message = android.os.Message.obtain(null, LocalServerService.WATCH); message.replyTo = localMessages; new android.os.Messenger(binder).send(message); }
+            catch (android.os.RemoteException error) { showFailure("本地服务暂时不可用，请重新打开应用"); }
+        }
+        @Override public void onServiceDisconnected(android.content.ComponentName name) {
+            if (!isFinishing() && !isDestroyed()) showFailure("本地服务正在恢复，已保存内容会保留");
+        }
+    };
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preferences = getSharedPreferences("whiteboard_tv", MODE_PRIVATE);
-        origin = preferences.getString("origin", "");
+        origin = LocalServerService.ORIGIN;
         root = new FrameLayout(this); root.setBackgroundColor(Color.rgb(247, 248, 250)); setContentView(root);
         immersive();
-        if (origin.isEmpty()) showSettings();
-        else openBoard(ServerAddress.resumeUrl(origin, preferences.getString("roomUrl", "")));
+        startLocal();
     }
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private void immersive() {
@@ -137,7 +152,7 @@ public final class MainActivity extends Activity {
         web = new WebView(this); root.addView(web,0,new FrameLayout.LayoutParams(-1,-1));
         WebSettings settings = web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " WhiteboardTV/0.2.4");
+        settings.setUserAgentString(settings.getUserAgentString() + " WhiteboardTV/0.3.0");
         settings.setSupportMultipleWindows(false); settings.setJavaScriptCanOpenWindowsAutomatically(false); settings.setMediaPlaybackRequiresUserGesture(true);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -153,13 +168,16 @@ public final class MainActivity extends Activity {
                 return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));
             }
             @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) { handler.cancel(); showFailure("服务证书无效，请修复 HTTPS 证书后重试。"); }
-            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) { if (request.isForMainFrame()) showFailure("白板暂时无法加载，请检查网络和服务地址。"); }
-            @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) { if (request.isForMainFrame()) showFailure("服务返回错误 " + response.getStatusCode() + "，请检查服务地址。"); }
+            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) { if (request.isForMainFrame()) showFailure("本地白板暂时无法加载，请重新打开应用。"); }
+            @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) { if (request.isForMainFrame()) showFailure("服务返回错误 " + response.getStatusCode() + "，请重新打开应用。"); }
             @Override public void doUpdateVisitedHistory(WebView view, String url, boolean reload) { remember(url); }
             @Override public void onPageFinished(WebView view, String url) {
                 remember(url);
                 if (overlay != null && "loading".equals(overlay.getTag())) { root.removeView(overlay); overlay = null; }
-                if (overlay == null && web != null) web.requestFocus();
+                if (overlay == null && web != null) {
+                    web.requestFocus();
+                    web.evaluateJavascript("(function(){var b=document.getElementById('create')||document.querySelector('.welcome-form button[type=submit]');if(b&&b.offsetWidth&&!b.disabled)b.focus();})()", null);
+                }
             }
             @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
                 root.removeView(view); view.destroy(); web = null; showFailure("电视释放了白板页面，重新打开即可恢复已保存内容。"); return true;
@@ -175,36 +193,44 @@ public final class MainActivity extends Activity {
             } catch (NumberFormatException ignored) { }
         }
         LinearLayout loading = panel(); loading.setTag("loading"); ImageView mark = new ImageView(this); mark.setImageResource(R.drawable.app_icon); loading.addView(mark, new LinearLayout.LayoutParams(dp(72),dp(72))); loading.addView(text("正在打开共创白板…",28,Color.rgb(23,32,51)));
-        loading.addView(button("服务地址设置",this::showSettings));
+        
         web.loadUrl(url);
     }
     private void remember(String url) {
-        if (ServerAddress.sameOrigin(origin,url)) preferences.edit().putString("roomUrl",ServerAddress.resumeUrl(origin,url)).apply();
+        if (ServerAddress.sameOrigin(origin,url)) preferences.edit().putString("localRoomUrl",ServerAddress.resumeUrl(origin,url)).apply();
+    }
+    private void startLocal() {
+        LinearLayout loading = panel(); loading.setTag("local-starting");
+        ImageView mark = new ImageView(this); mark.setImageResource(R.drawable.app_icon);
+        loading.addView(mark, new LinearLayout.LayoutParams(dp(72), dp(72)));
+        loading.addView(text("正在准备共创白板…", 28, Color.rgb(23,32,51)));
+        loading.addView(text("内容保存在这台电视，手机扫码即可一起写", 18, Color.rgb(89,101,121)));
+        if (localBound) {
+            try { android.content.Intent intent = new android.content.Intent(this, LocalServerService.class); unbindService(localConnection); localBound = false; } catch (Exception ignored) { }
+        }
+        localBound = bindService(new android.content.Intent(this, LocalServerService.class), localConnection, BIND_AUTO_CREATE);
+        if (!localBound) showFailure("无法启动本地白板，请重新打开应用");
     }
     private void showFailure(String message) {
         LinearLayout panel = panel(); panel.addView(text(message,24,Color.rgb(23,32,51)));
-        Button retry = button("重新打开白板", () -> openBoard(ServerAddress.resumeUrl(origin,preferences.getString("roomUrl","")))); panel.addView(retry);
-        panel.addView(button("修改服务地址",this::showSettings)); retry.requestFocus();
+        Button retry = button("重新打开白板", () -> openBoard(ServerAddress.resumeUrl(origin,preferences.getString("localRoomUrl","")))); panel.addView(retry);
+        panel.addView(button("退出应用", this::confirmExit)); retry.requestFocus();
     }
     private void showMenu() {
         if ((menu != null && menu.isShowing()) || (exitConfirmation != null && exitConfirmation.isShowing())) return;
-        if (origin.isEmpty()) {
-            menu = BoardDialog.show(this, "设置", "", new String[]{"继续设置", "退出应用"}, new Runnable[]{() -> {}, this::confirmExit});
-            return;
-        }
-        menu = BoardDialog.show(this, "设置", "", new String[]{overlay == null ? "继续展示" : "返回当前页面", "重新加载", "新建白板", "服务地址设置", "退出应用"}, new Runnable[]{
+        menu = BoardDialog.show(this, "设置", "白板与图片保存在这台电视。手机与电视连接同一网络，即可扫码加入。", new String[]{overlay == null ? "继续展示" : "返回当前页面", "重新加载", "新建白板", "退出应用"}, new Runnable[]{
             () -> {},
-            () -> openBoard(ServerAddress.resumeUrl(origin, preferences.getString("roomUrl", ""))),
-            () -> BoardDialog.show(this, "新建白板？", "当前白板仍会保留，手机成员可以继续使用。", new String[]{"取消", "新建"}, new Runnable[]{
-                () -> {}, () -> { preferences.edit().remove("roomUrl").apply(); openBoard(ServerAddress.startUrl(origin)); }
+            () -> openBoard(ServerAddress.resumeUrl(origin, preferences.getString("localRoomUrl", ""))),
+            () -> BoardDialog.show(this, "新建白板？", "当前白板仍保存在电视上，已加入的手机成员可在应用运行时继续使用。", new String[]{"取消", "新建"}, new Runnable[]{
+                () -> {}, () -> { preferences.edit().remove("localRoomUrl").apply(); openBoard(ServerAddress.startUrl(origin)); }
             }),
-            this::showSettings, this::confirmExit
+            this::confirmExit
         });
         menu.setOnDismissListener(dialog -> immersive());
     }
     private void confirmExit() {
         if (exitConfirmation != null && exitConfirmation.isShowing()) return;
-        exitConfirmation = BoardDialog.show(this, "退出白板？", "已同步的内容会保留，下次打开将回到当前白板。", new String[]{"继续展示", "退出应用"}, new Runnable[]{
+        exitConfirmation = BoardDialog.show(this, "退出白板？", "已保存的内容会保留，下次打开回到当前白板。退出后手机将暂时断开。", new String[]{"继续展示", "退出应用"}, new Runnable[]{
             () -> {}, this::finish
         });
         exitConfirmation.setOnDismissListener(dialog -> immersive());
@@ -223,5 +249,5 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onPause() { if (web != null) { remember(web.getUrl()); web.onPause(); } super.onPause(); }
     @Override protected void onResume() { super.onResume(); if (web != null && overlay == null) web.onResume(); immersive(); }
-    @Override protected void onDestroy() { requestVersion++; network.shutdownNow(); if (web != null) { root.removeView(web); web.destroy(); web = null; } super.onDestroy(); }
+    @Override protected void onDestroy() { requestVersion++; network.shutdownNow(); if (localBound) { unbindService(localConnection); localBound = false; } if (web != null) { root.removeView(web); web.destroy(); web = null; } super.onDestroy(); }
 }

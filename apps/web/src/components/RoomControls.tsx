@@ -1,3 +1,4 @@
+import { useJoinOrigin } from '../use-join-origin';
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { BoardSession, roomLink, type SessionState } from '../session';
@@ -8,12 +9,13 @@ export function RoomControls({ session, state, onClose, focus, onFocus }: { focu
   const [invite, setInvite] = useState(false);
   const [claim, setClaim] = useState(false), [ending, setEnding] = useState(false);
   useEffect(() => { const el = dialog.current!, previous = document.activeElement as HTMLElement | null; el.showModal(); return () => { el.close(); if (previous?.isConnected) previous.focus({ preventScroll: true }); }; }, []);
+  const origin = useJoinOrigin();
   const access = state.access;
   const disabled = !state.host || state.connection !== 'online' || access?.ended;
   return <dialog ref={dialog} className="invite-dialog room-controls" onCancel={event => { event.stopPropagation(); onClose(); }}>
     <button className="icon-button close-dialog" aria-label="关闭管理" onClick={onClose}><X size={22}/></button>
     <h2>会话管理</h2><p>控制加入方式，管理当前共创成员</p>
-    {session.credentials.role === 'viewer' ? <button disabled={state.connection !== 'online' || !access || access.paused || access.ended} className="secondary" onClick={() => setInvite(true)}>邀请加入</button> : null}
+    {session.credentials.role === 'viewer' ? <button disabled={!origin || state.connection !== 'online' || !access || access.paused || access.ended} className="secondary" onClick={() => setInvite(true)}>邀请加入</button> : null}
     {state.host ? <div className="management-actions">
       <button disabled={disabled} className="secondary" onClick={() => session.manage(access?.paused ? 'resume' : 'pause')}>{access?.paused ? '恢复加入' : '暂停加入'}</button>
       <button disabled={disabled} className="secondary" onClick={() => session.manage('rotate')}>更新邀请二维码</button>

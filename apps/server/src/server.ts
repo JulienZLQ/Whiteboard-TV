@@ -1,5 +1,5 @@
 import { applyHistory, historyState, recordHistory } from './history';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -10,10 +10,16 @@ import { ImageStore } from './images';
 import { RoomStore, secret, type Room } from './store';
 
 type Peer = { legacyTV: boolean; snapshotTimer?: ReturnType<typeof setTimeout>; room: Room; member: Member; token: string; previewSeq: number; objectSeq: number; alive: boolean };
-const matches = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const matches = (a: string, b: string) => a.length === b.length && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' };
 
-export function createWhiteboardServer(options: { dataDir: string; webRoot?: string }) {
+export type LocalHost = {
+  joinOrigin: () => string | null;
+  allowRequest: (req: IncomingMessage) => boolean;
+  stopToken: string;
+  stop: () => void;
+};
+export function createWhiteboardServer(options: { dataDir: string; webRoot?: string; local?: LocalHost }) {
   const store = new RoomStore(options.dataDir);
   const peers = new Map<WebSocket, Peer>();
   const images = new ImageStore(options.dataDir);
@@ -21,7 +27,16 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
   const server = createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
+    if (options.local && !options.local.allowRequest(req)) { res.writeHead(403).end(); return; }
     const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname === '/api/local-info' && options.local) {
+      res.setHeader('Cache-Control', 'no-store'); res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ mode: 'local', joinOrigin: options.local.joinOrigin() })); return;
+    }
+    if (url.pathname === '/api/local-stop' && options.local) {
+      if (req.method !== 'POST' || req.socket.remoteAddress !== '127.0.0.1' || !matches(String(req.headers['x-local-control'] || ''), options.local.stopToken)) { res.writeHead(403).end(); return; }
+      res.writeHead(202).end(); options.local.stop(); return;
+    }
     if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M3-history"}'); return; }
     if (url.pathname === '/api/rooms' && req.method === 'POST') {
       // JSON/custom-header requirement blocks ordinary cross-origin forms; no CORS is enabled.
@@ -84,7 +99,8 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
       res.end(req.method === 'HEAD' ? undefined : body);
     } catch { res.writeHead(404).end(); }
   });
-  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 });
+  const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024,
+    verifyClient: (info: { req: IncomingMessage }) => !options.local || options.local.allowRequest(info.req) });
   wss.on('error', () => { /* HTTP listen failures are reported by listen(). */ });
   function send(ws: WebSocket, message: ServerMessage) {
     if (ws.readyState !== WebSocket.OPEN) return;
@@ -133,6 +149,13 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
             let role: Member['role'] | null = host || room.access.editors.includes(token) ? 'editor' : matches(token, room.viewerToken) ? 'viewer' : null;
             const claim = !!room.access.claimToken && matches(token, room.access.claimToken);
             const joining = matches(token, room.access.inviteToken);
+            // A local TV reopening its saved board may renew an expired invitation.
+            // Paused/ended sessions and all remote-server sessions keep existing policy.
+            if (options.local && (role === 'viewer' || (host && (hello.viewOnly || hello.legacyTV))) && !room.access.paused && !room.access.ended && Date.now() >= room.access.expiresAt) {
+              const previous = room.access;
+              room.access = { ...previous, inviteToken: secret(), expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
+              try { await store.save(room, room.doc); } catch (error) { room.access = previous; throw error; }
+            }
             if (room.access.ended || members(room).length >= 32 || ((joining || claim) && (room.access.paused || Date.now() >= room.access.expiresAt))) { ws.close(1008, 'Room unavailable'); return; }
             if (claim || joining) {
               if (!claim && room.access.editors.length >= 256) { ws.close(1008, 'Room full'); return; }
@@ -323,6 +346,18 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
     });
   });
   const heartbeat = setInterval(() => {
+    if (options.local) {
+      const rooms = new Set([...peers.values()].filter(peer => peer.member.role === 'viewer').map(peer => peer.room));
+      for (const room of rooms) if (!room.access.paused && !room.access.ended && Date.now() >= room.access.expiresAt) {
+        room.queue = room.queue.then(async () => {
+          if (room.access.paused || room.access.ended || Date.now() < room.access.expiresAt) return;
+          const previous = room.access;
+          room.access = { ...previous, inviteToken: secret(), expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
+          try { await store.save(room, room.doc); } catch (error) { room.access = previous; throw error; }
+          publishAccess(room);
+        }).catch(() => {}); // Retry at the next heartbeat, never acknowledge an unsaved renewal.
+      }
+    }
     for (const [socket, peer] of peers) {
       if (!peer.alive) socket.terminate();
       else { peer.alive = false; socket.ping(); }
@@ -339,7 +374,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
       clearInterval(heartbeat);
       for (const ws of wss.clients) ws.terminate();
       await new Promise<void>(resolve => wss.close(() => resolve()));
-      await new Promise<void>(resolve => server.close(() => resolve()));
+      await new Promise<void>(resolve => { server.close(() => resolve()); server.closeIdleConnections(); });
       await store.close();
     },
   };

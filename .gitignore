@@ -15,3 +15,7 @@ local.properties
 *.aab
 *.jks
 *.keystore
+
+# Generated embedded runtime (reproducible with scripts/prepare-android-local.mjs)
+apps/android-tv/app/src/main/jniLibs/
+apps/android-tv/app/src/main/assets/local-runtime/

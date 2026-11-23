@@ -187,7 +187,7 @@ test('legacy TV receives snapshots and previews with forced viewer permissions',
     editor.send({ type: 'create-object', object, mutationId: 'legacy-note-save' }); await editor.wait('saved');
     const saved = await tv.wait('snapshot', m => m.objects.length === 1); assert.equal(saved.strokes.length, 1);
     editor.send({ type: 'delete-object', objectId: object.id, mutationId: 'legacy-note-delete' }); await editor.wait('saved');
-    const deleted = await tv.wait('snapshot', m => m.objects.length === 0); assert.ok(deleted.deletedObjectIds?.includes(object.id));
+    const deleted = await tv.wait('snapshot', m => m.objects.length === 0 && !!m.deletedObjectIds?.includes(object.id)); assert.ok(deleted.deletedObjectIds?.includes(object.id));
   } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
 

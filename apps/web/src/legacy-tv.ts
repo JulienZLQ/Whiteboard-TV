@@ -1,3 +1,4 @@
+import { joinOrigin, watchJoinOrigin } from './local-host';
 import { openTVMenu, closeTVDialog, browserTVBack } from './tv-menu';
 import { rowNavigation, fitTVContent } from './tv-layout';
 import QRCode from 'qrcode';
@@ -37,18 +38,18 @@ function status(text: string, online = false) {
 }
 function showBoard() { get('welcome').hidden = true; get('welcome-backdrop').hidden = true; get('footer').hidden = false; get('manage-members').hidden = false; get('canvas-view').focus(); schedule(); }
 function updateQR() {
-  const available = connected && access && !access.paused && !access.ended && Date.now() < access.expiresAt;
+  const available = !!joinOrigin() && connected && access && !access.paused && !access.ended && Date.now() < access.expiresAt;
   get('join').hidden = !credentials;
   const image = get<HTMLImageElement>('qr');
   get('qr-hint').hidden = !!available;
   if (!available) {
     image.hidden = true; qrKey = ''; qrVersion++;
-    get('qr-hint').textContent = access?.ended ? '本次会话已结束' : connected ? '加入已暂停或邀请已过期' : '连接恢复后显示二维码';
+    get('qr-hint').textContent = !joinOrigin() ? '电视连接 Wi-Fi 或网线后即可扫码加入' : access?.ended ? '本次会话已结束' : connected ? '加入已暂停或邀请已过期' : '连接恢复后显示二维码';
     return;
   }
   if (!access!.claimToken) claimMode = false;
   const token = claimMode ? access!.claimToken! : access!.inviteToken;
-  const url = location.origin + '/?room=' + credentials!.roomId + '#token=' + token;
+  const url = joinOrigin() + '/?room=' + credentials!.roomId + '#token=' + token;
   get('qr-title').textContent = claimMode ? '手机认领主持权限' : '扫码，一起写';
   image.alt = claimMode ? '手机主持认领二维码' : '电视编辑加入二维码';
   if (url === qrKey) { image.hidden = false; return; }
@@ -241,3 +242,5 @@ window.WhiteboardTV = {
 window.addEventListener('keydown', e => { if (e.key === 'Escape' ? (window.WhiteboardTV!.back() || browserTVBack()) : window.WhiteboardTV!.key(e.key)) e.preventDefault(); });
 if (credentials) { showBoard(); connect(); } else create.focus();
 schedule();
+
+watchJoinOrigin(updateQR);

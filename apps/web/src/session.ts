@@ -1,3 +1,4 @@
+import { joinOrigin } from './local-host';
 import { saveCredentials } from './tv';
 import * as Y from 'yjs';
 import { orderedItems, patchObject, resolveObject, LIMITS, type BoardObject, type ObjectPatch, type ObjectMutation, type ObjectPreview, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
@@ -194,7 +195,9 @@ export class BoardSession {
 }
 
 export function roomLink(credentials: Credentials, viewer = false) {
-  const url = new URL('/', location.origin);
+  const origin = joinOrigin();
+  if (!origin) return '';
+  const url = new URL('/', origin);
   url.searchParams.set('room', credentials.roomId);
   if (viewer) url.searchParams.set('mode', 'tv');
   url.hash = new URLSearchParams({ token: viewer ? credentials.viewerToken ?? credentials.token : credentials.token }).toString();
