@@ -31,6 +31,7 @@
 15. [形状、箭头与对象连接](docs/15-shapes-connectors.md)
 16. [协作撤销、PNG 导出与电视方向导航](docs/16-history-export-navigation.md)
 17. [电视隐藏界面、设置菜单与退出确认](docs/17-tv-presentation.md)
+18. [共写品牌、图标与视觉延展](docs/18-brand-identity.md)
 
 ## 推进方式
 

@@ -419,7 +419,7 @@ test('TV controls keep the QR anchor fixed and distinguish canvas from content w
     const connection = await (legacy ? tv.locator('#status') : tv.locator('.connection')).boundingBox();
     expect(sync!.x + sync!.width).toBeLessThan(connection!.x);
     await tv.getByRole('button', { name: '设置', exact: true }).click();
-    await expect(tv.getByRole('dialog', { name: '电视白板', exact: true })).toBeVisible();
+    await expect(tv.getByRole('dialog', { name: '设置', exact: true })).toBeVisible();
     await tv.keyboard.press('Escape'); await expect(tv.getByRole('dialog')).toHaveCount(0);
     await tv.keyboard.press('Escape'); await expect(tv.getByRole('dialog', { name: '退出白板？' })).toBeVisible();
     await tv.getByRole('button', { name: '继续展示', exact: true }).click();

@@ -6,4 +6,8 @@
     <item name="android:windowActionModeOverlay">true</item>
     <item name="android:windowBackground">#F7F8FA</item>
 </style>
+<style name="BoardDialogAnimation">
+    <item name="android:windowEnterAnimation">@anim/board_dialog_enter</item>
+    <item name="android:windowExitAnimation">@anim/board_dialog_exit</item>
+</style>
 </resources>

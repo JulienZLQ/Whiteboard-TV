@@ -99,7 +99,7 @@ export function Board({ session }: { session: BoardSession }) {
   const status = state.connection === 'denied' ? '无法连接' : state.connection === 'offline' ? '连接中断' : state.connection === 'connecting' ? '正在连接' : '实时连接';
   return <main className={`board ${viewer ? 'tv-mode' : ''}`}>
     <div ref={container} className="canvas" data-testid="canvas" aria-label={viewer ? '电视白板总览' : '白板绘图区'} style={{ cursor: viewer ? 'default' : tool === 'hand' ? 'grab' : tool === 'select' ? 'default' : tool === 'text' ? 'text' : 'crosshair' }}/>
-    <header className="brand panel"><div className="brand-mark" aria-hidden="true">W</div><div><h1>共创白板</h1>{!viewer ? <p>每个人的想法，都在这里</p> : null}</div></header>
+    <header className="brand panel"><img className="brand-mark" src="/brand/co-write-icon-v1.svg" alt=""/><div><h1>共创白板</h1>{!viewer ? <p>每个人的想法，都在这里</p> : null}</div></header>
     <div className={viewer ? "collaboration tv-header" : "collaboration panel"}>
       {!viewer ? <div className="avatars" aria-label={`${state.members.length} 台设备在线`}>{state.members.slice(0, 3).map(member => <span key={member.id} title={`${member.name}${member.role === 'viewer' ? ' · 观看' : ''}`} style={{ backgroundColor: member.color }}>{member.role === 'viewer' ? <Monitor size={17}/> : member.name.slice(0, 1)}</span>)}</div> : null}
       {viewer ? <span className="tv-sync tv-header-item" role="status">{state.connection === 'online' ? '实时同步' : '等待同步'}</span> : null}

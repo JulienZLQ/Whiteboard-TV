@@ -86,3 +86,7 @@ gradle -p apps/android-tv :app:assembleDebug :app:testDebugUnitTest :app:lintDeb
 - [AGP 8.7 与 Gradle/JDK 兼容要求](https://developer.android.com/build/releases/agp-8-7-0-release-notes)
 - [WebView 生命周期与渲染进程处理](https://developer.android.com/develop/ui/views/layout/webapps/managing-webview)
 - [WebView 原生桥接边界](https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges)
+
+## 0.2.4 视觉与安装更新
+
+使用用户确认的共写 SVG 标识生成 Android 自适应图标、原生加载图形和带中文名称的 320×180 电视封面；连接与加载背景采用同源曲线。设置／新建／退出使用统一卡片，原房间恢复保持。构建使用 --no-watch-fs；本地同证书覆盖安装验证通过。Android 8.0/API 26 起可安装，WebView 66+ 使用既有兼容分流。APK 不包含白板服务，其他电视填写可达的同一个服务来源地址。品牌规范见 [视觉标识](18-brand-identity.md)。

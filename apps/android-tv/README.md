@@ -13,3 +13,5 @@ gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --no-daemon
 首次启动输入已部署白板服务的来源地址，例如 http://192.168.1.20:8787。APK 不包含服务端。菜单键或右上角“设置”打开设置/重新加载/新建入口；返回先关闭弹窗，在白板主界面显示退出确认。
 
 完整安装、按键、恢复和验证说明见 [Android TV 文档](../../docs/10-android-tv.md)。
+
+0.2.4-preview 使用共写 SVG 派生图标、电视横版封面和统一原生卡片。其他电视安装后填写可达的服务地址即可；应用本身不内置服务。品牌源文件和使用规则见 [视觉标识](../../docs/18-brand-identity.md)。

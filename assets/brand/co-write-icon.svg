@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">共创白板 · 共写</title>
+  <desc id="desc">两笔相向共写，蓝色画布左右各保留一处断口。图形铺满画幅，无外围白色底板。</desc>
+  <defs>
+    <clipPath id="canvas"><rect width="1024" height="1024" rx="190"/></clipPath>
+  </defs>
+  <g clip-path="url(#canvas)">
+    <rect width="1024" height="1024" fill="#FFFFFF"/>
+    <!-- Upper frame ends before the left stroke. The white break is intentional. -->
+    <path fill="#315EFB" d="M0 568V190C0 85 85 0 190 0H834C939 0 1024 85 1024 190V276H924V190C924 140 884 100 834 100H190C140 100 100 140 100 190V568Q100 576 92 576H8Q0 576 0 568Z"/>
+    <!-- Lower frame and first brush stroke form one flowing shape. -->
+    <path fill="#315EFB" d="M0 615C164 615 279 563 367 507C414 477 464 482 493 522C528 570 510 626 461 670C360 759 225 810 100 836C101 885 141 924 190 924H834C884 924 924 884 924 834V563Q924 555 932 555H1016Q1024 555 1024 563V834C1024 939 939 1024 834 1024H190C85 1024 0 939 0 834Z"/>
+    <!-- The second stroke ends above the right frame, leaving the second open break. -->
+    <path fill="#9AA7FF" d="M1024 262C834 260 672 318 574 423C531 469 513 517 542 555C570 592 618 599 661 574C768 512 887 511 1024 511Z"/>
+  </g>
+</svg>

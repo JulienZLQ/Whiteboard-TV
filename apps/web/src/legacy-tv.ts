@@ -3,6 +3,7 @@ import { rowNavigation, fitTVContent } from './tv-layout';
 import QRCode from 'qrcode';
 import { resolveObject, canvasBounds, DEFAULT_CANVAS, contentBounds, fitCamera, objectLayout, type AccessState, type BoardObject, type BoardSnapshot, type Credentials, type Member, type Camera, type Point, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 import './legacy-tv.css';
+import './brand.css';
 import { ImageCache } from './images';
 
 // A dedicated read-only receiver avoids loading the modern editor/Yjs runtime on old TV WebViews.
@@ -34,7 +35,7 @@ function status(text: string, online = false) {
   get('saved').textContent = online ? '实时同步' : '等待同步';
   get('status').title = text;
 }
-function showBoard() { get('welcome').hidden = true; get('footer').hidden = false; get('manage-members').hidden = false; get('canvas-view').focus(); schedule(); }
+function showBoard() { get('welcome').hidden = true; get('welcome-backdrop').hidden = true; get('footer').hidden = false; get('manage-members').hidden = false; get('canvas-view').focus(); schedule(); }
 function updateQR() {
   const available = connected && access && !access.paused && !access.ended && Date.now() < access.expiresAt;
   get('join').hidden = !credentials;

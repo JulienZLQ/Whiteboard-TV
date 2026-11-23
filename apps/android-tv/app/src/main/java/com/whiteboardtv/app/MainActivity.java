@@ -2,7 +2,7 @@ package com.whiteboardtv.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.graphics.Color;
@@ -27,6 +27,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.ImageView;
 import android.widget.Toast;
 import java.io.ByteArrayInputStream;
 import java.net.HttpURLConnection;
@@ -43,8 +44,8 @@ public final class MainActivity extends Activity {
     private View overlay;
     private String origin;
     private int requestVersion;
-    private AlertDialog menu;
-    private AlertDialog exitConfirmation;
+    private Dialog menu;
+    private Dialog exitConfirmation;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -76,12 +77,12 @@ public final class MainActivity extends Activity {
     private Button button(String title, Runnable action) {
         Button b = new Button(this); b.setText(title); b.setTextSize(19); b.setAllCaps(false); b.setTextColor(Color.rgb(23,32,51));
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, dp(58)); params.topMargin = dp(12); b.setLayoutParams(params);
-        focusStyle(b); b.setOnClickListener(v -> action.run()); return b;
+        b.setStateListAnimator(null); BoardDialog.styleButton(b, Color.WHITE, getResources().getDisplayMetrics().density); b.setPadding(dp(18), dp(10), dp(18), dp(10)); b.setOnClickListener(v -> action.run()); return b;
     }
     private LinearLayout panel() {
         if (overlay != null) root.removeView(overlay);
         LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setGravity(Gravity.CENTER_VERTICAL);
-        panel.setPadding(dp(48),dp(24),dp(48),dp(24)); panel.setBackgroundColor(Color.rgb(247,248,250));
+        panel.setPadding(dp(48),dp(24),dp(48),dp(24)); panel.setBackgroundResource(R.drawable.welcome_background);
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-1,-1); root.addView(panel,params); overlay = panel; return panel;
     }
     private void showSettings() {
@@ -136,7 +137,7 @@ public final class MainActivity extends Activity {
         web = new WebView(this); root.addView(web,0,new FrameLayout.LayoutParams(-1,-1));
         WebSettings settings = web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        settings.setUserAgentString(settings.getUserAgentString() + " WhiteboardTV/0.2.2");
+        settings.setUserAgentString(settings.getUserAgentString() + " WhiteboardTV/0.2.4");
         settings.setSupportMultipleWindows(false); settings.setJavaScriptCanOpenWindowsAutomatically(false); settings.setMediaPlaybackRequiresUserGesture(true);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -173,7 +174,7 @@ public final class MainActivity extends Activity {
                 if (major < 110) url = ServerAddress.legacyUrl(origin, url);
             } catch (NumberFormatException ignored) { }
         }
-        LinearLayout loading = panel(); loading.setTag("loading"); loading.addView(text("正在打开共创白板…",28,Color.rgb(23,32,51)));
+        LinearLayout loading = panel(); loading.setTag("loading"); ImageView mark = new ImageView(this); mark.setImageResource(R.drawable.app_icon); loading.addView(mark, new LinearLayout.LayoutParams(dp(72),dp(72))); loading.addView(text("正在打开共创白板…",28,Color.rgb(23,32,51)));
         loading.addView(button("服务地址设置",this::showSettings));
         web.loadUrl(url);
     }
@@ -186,31 +187,27 @@ public final class MainActivity extends Activity {
         panel.addView(button("修改服务地址",this::showSettings)); retry.requestFocus();
     }
     private void showMenu() {
-        if (menu != null && menu.isShowing()) return;
+        if ((menu != null && menu.isShowing()) || (exitConfirmation != null && exitConfirmation.isShowing())) return;
         if (origin.isEmpty()) {
-            menu = new AlertDialog.Builder(this).setTitle("共创白板")
-                .setItems(new String[]{"继续设置", "退出应用"}, (dialog, which) -> { if (which == 1) confirmExit(); }).create();
-            menu.show(); return;
+            menu = BoardDialog.show(this, "设置", "", new String[]{"继续设置", "退出应用"}, new Runnable[]{() -> {}, this::confirmExit});
+            return;
         }
-        menu = new AlertDialog.Builder(this).setTitle("电视白板")
-            .setItems(new String[]{overlay == null ? "继续展示" : "返回当前页面", "重新加载", "新建白板", "服务地址设置", "退出应用"}, (dialog, which) -> {
-                if (which == 1) openBoard(ServerAddress.resumeUrl(origin,preferences.getString("roomUrl","")));
-                if (which == 2) new AlertDialog.Builder(this).setTitle("新建白板？").setMessage("当前白板仍保留在服务中，手机成员可以继续使用。电视将进入新白板创建页。")
-                    .setNegativeButton("取消",null).setPositiveButton("新建",(d,w) -> { preferences.edit().remove("roomUrl").apply(); openBoard(ServerAddress.startUrl(origin)); }).show();
-                if (which == 3) showSettings();
-                if (which == 4) confirmExit();
-            }).create();
-        menu.show();
+        menu = BoardDialog.show(this, "设置", "", new String[]{overlay == null ? "继续展示" : "返回当前页面", "重新加载", "新建白板", "服务地址设置", "退出应用"}, new Runnable[]{
+            () -> {},
+            () -> openBoard(ServerAddress.resumeUrl(origin, preferences.getString("roomUrl", ""))),
+            () -> BoardDialog.show(this, "新建白板？", "当前白板仍会保留，手机成员可以继续使用。", new String[]{"取消", "新建"}, new Runnable[]{
+                () -> {}, () -> { preferences.edit().remove("roomUrl").apply(); openBoard(ServerAddress.startUrl(origin)); }
+            }),
+            this::showSettings, this::confirmExit
+        });
+        menu.setOnDismissListener(dialog -> immersive());
     }
     private void confirmExit() {
         if (exitConfirmation != null && exitConfirmation.isShowing()) return;
-        exitConfirmation = new AlertDialog.Builder(this).setTitle("退出白板？")
-            .setMessage("已同步的内容会保留，下次打开将回到当前白板。")
-            .setNegativeButton("继续展示", (dialog, which) -> { if (web != null) web.requestFocus(); })
-            .setPositiveButton("退出应用", (dialog, which) -> finish()).create();
+        exitConfirmation = BoardDialog.show(this, "退出白板？", "已同步的内容会保留，下次打开将回到当前白板。", new String[]{"继续展示", "退出应用"}, new Runnable[]{
+            () -> {}, this::finish
+        });
         exitConfirmation.setOnDismissListener(dialog -> immersive());
-        exitConfirmation.show();
-        exitConfirmation.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) { if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) showMenu(); return true; }
