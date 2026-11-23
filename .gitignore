@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.data/
+.env
+!.env.example
+test-results/
+playwright-report/
+*.log
+
+# Android build and local SDK/signing state
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# Generated embedded runtime (reproducible with scripts/prepare-android-local.mjs)
+apps/android-tv/app/src/main/jniLibs/
+apps/android-tv/app/src/main/assets/local-runtime/

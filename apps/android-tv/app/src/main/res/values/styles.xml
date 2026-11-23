@@ -1,0 +1,13 @@
+<resources>
+<style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:colorAccent">#315EFB</item>
+    <item name="android:windowLightStatusBar">true</item>
+    <item name="android:windowActionModeOverlay">true</item>
+    <item name="android:windowBackground">#F7F8FA</item>
+</style>
+<style name="BoardDialogAnimation">
+    <item name="android:windowEnterAnimation">@anim/board_dialog_enter</item>
+    <item name="android:windowExitAnimation">@anim/board_dialog_exit</item>
+</style>
+</resources>

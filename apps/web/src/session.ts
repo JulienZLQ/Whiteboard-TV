@@ -1,0 +1,205 @@
+import { joinOrigin } from './local-host';
+import { saveCredentials } from './tv';
+import * as Y from 'yjs';
+import { orderedItems, patchObject, resolveObject, LIMITS, type BoardObject, type ObjectPatch, type ObjectMutation, type ObjectPreview, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
+
+export function newId() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''); }
+type Mutation = Extract<ClientMessage, { type: 'commit' | 'delete' | 'history' }> | ObjectMutation;
+export type SessionState = { undo: number; redo: number; notice: string; host: boolean; access?: AccessState; connection: 'connecting' | 'online' | 'offline' | 'denied'; pending: number; error: string; members: Member[]; memberId: string };
+const decode = (value: string) => Uint8Array.from(atob(value), char => char.charCodeAt(0));
+
+export class BoardSession {
+  readonly doc = new Y.Doc();
+  readonly objectPreviews = new Map<string, ObjectPreview>();
+  readonly previews = new Map<string, Preview>();
+  readonly members = new Map<string, Member>();
+  private pending = new Map<string, Mutation>();
+  private inFlight = new Set<string>();
+  private uiListeners = new Set<() => void>();
+  private canvasListeners = new Set<() => void>();
+  private socket?: WebSocket;
+  private stopped = false;
+  private timer?: ReturnType<typeof setTimeout>;
+  private sweep: ReturnType<typeof setInterval>;
+  private retry = 500;
+  private seq = 0;
+  private objectSeq = 0;
+  private lastObjectPreview = 0;
+  private lastPresence = 0;
+  private lastPreview = 0;
+  private queueKey: string;
+  private state: SessionState = { undo: 0, redo: 0, notice: '', host: false, connection: 'connecting', pending: 0, error: '', members: [], memberId: '' };
+  constructor(readonly credentials: Credentials, readonly name: string) {
+    this.queueKey = `whiteboard.pending.${credentials.roomId}`;
+    try {
+      const saved = credentials.role === 'editor' ? JSON.parse(sessionStorage.getItem(this.queueKey) ?? '[]') as Mutation[] : [];
+      for (const operation of saved) this.pending.set(operation.mutationId, operation);
+    } catch { /* Storage may be disabled; live session still works. */ }
+    this.doc.on('update', this.redraw);
+    window.addEventListener('offline', this.offline);
+    window.addEventListener('online', this.online);
+    this.sweep = setInterval(() => {
+      let changed = false;
+      for (const [id, preview] of this.previews) if (Date.now() - preview.updatedAt > LIMITS.previewTtl) { this.previews.delete(id); changed = true; }
+      for (const [id, preview] of this.objectPreviews) if (Date.now() - preview.updatedAt > LIMITS.previewTtl) { this.objectPreviews.delete(id); changed = true; }
+      if (changed) this.redraw();
+    }, 500);
+  }
+  subscribe = (listener: () => void) => { this.uiListeners.add(listener); return () => { this.uiListeners.delete(listener); }; };
+  subscribeCanvas = (listener: () => void) => { this.canvasListeners.add(listener); return () => { this.canvasListeners.delete(listener); }; };
+  getSnapshot = () => this.state;
+  private publish(patch: Partial<SessionState> = {}) {
+    this.state = { ...this.state, ...patch, pending: this.pending.size };
+    for (const listener of this.uiListeners) listener();
+  }
+  private redraw = () => { for (const listener of this.canvasListeners) listener(); };
+  private send(message: ClientMessage) { if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message)); }
+  private offline = () => {
+    clearTimeout(this.timer); this.publish({ connection: 'offline', members: [] });
+    this.socket?.close();
+  };
+  private online = () => {
+    if (this.stopped || this.state.connection === 'denied') return;
+    clearTimeout(this.timer); this.connect();
+  };
+  connect = () => {
+    if (this.stopped) return;
+    if (!navigator.onLine) { this.publish({ connection: 'offline' }); return; }
+    this.publish({ connection: 'connecting' });
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`);
+    this.socket = ws;
+    ws.onopen = () => this.send({ type: 'hello', protocolVersion: 1, roomId: this.credentials.roomId, token: this.credentials.token, name: this.name, viewOnly: this.credentials.role === 'viewer' });
+    ws.onmessage = event => {
+      let message: ServerMessage;
+      try { message = JSON.parse(event.data); } catch { return; }
+      if (message.type === 'ready') {
+        this.retry = 500; this.seq = 0; this.objectSeq = 0;
+        this.credentials.viewerToken = message.viewerToken;
+        this.credentials.role = message.role;
+        if (message.token) this.credentials.token = message.token;
+        saveCredentials(this.credentials);
+        Y.applyUpdate(this.doc, decode(message.update));
+        this.members.clear(); for (const member of message.members) this.members.set(member.id, member);
+        this.publish({ connection: 'online', host: !!message.host, access: message.access, memberId: message.memberId, members: message.members, error: '' });
+        this.inFlight.clear(); this.flush();
+        this.redraw();
+      } else if (message.type === 'history-state') {
+        this.publish(message.history);
+      } else if (message.type === 'access') {
+        this.publish({ access: message.access });
+      } else if (message.type === 'members') {
+        this.members.clear(); for (const member of message.members) this.members.set(member.id, member);
+        this.publish({ members: message.members }); this.redraw();
+      } else if (message.type === 'presence') {
+        this.members.set(message.member.id, message.member); this.redraw();
+      } else if (message.type === 'preview') {
+        if (message.stroke) this.previews.set(message.memberId, { memberId: message.memberId, stroke: message.stroke, updatedAt: Date.now() });
+        else this.previews.delete(message.memberId);
+        this.redraw();
+      } else if (message.type === 'object-preview') {
+        if (message.object) this.objectPreviews.set(message.memberId, { memberId: message.memberId, object: message.object, updatedAt: Date.now() });
+        else this.objectPreviews.delete(message.memberId);
+        this.redraw();
+      } else if (message.type === 'update') {
+        Y.applyUpdate(this.doc, decode(message.update));
+      } else if (message.type === 'saved') {
+        this.pending.delete(message.mutationId); this.inFlight.delete(message.mutationId); this.persistQueue(); this.publish({ error: '', notice: message.notice || '' }); this.redraw(); this.flush();
+      } else if (message.type === 'error') {
+        this.publish({ error: message.message });
+      }
+    };
+    ws.onclose = event => {
+      if (ws !== this.socket) return;
+      this.members.clear(); this.previews.clear(); this.objectPreviews.clear(); this.inFlight.clear(); this.redraw();
+      if (this.stopped) return;
+      if (event.code === 1008) { this.publish({ connection: 'denied', members: [], error: this.state.access?.ended ? '本次会话已结束，仍可导出本地副本' : '邀请已失效、成员已被移除或房间不可用，请联系主持人' }); return; }
+      this.publish({ connection: 'offline', members: [] });
+      if (navigator.onLine) this.timer = setTimeout(this.connect, this.retry);
+      this.retry = Math.min(10_000, this.retry * 2);
+    };
+  };
+  getStrokes(): Stroke[] {
+    const strokes = new Map(this.doc.getMap<Stroke>('strokes').entries());
+    const deleted = this.doc.getMap<boolean>('deleted');
+    for (const operation of this.pending.values()) {
+      if (operation.type === 'commit' && !deleted.has(operation.stroke.id)) strokes.set(operation.stroke.id, operation.stroke);
+      if (operation.type === 'delete') strokes.delete(operation.strokeId);
+    }
+    return orderedItems([...strokes.values()], id => this.doc.getMap<number>('renderOrder').get('strokes:' + id) ?? (this.doc.getMap('strokes').has(id) ? 0 : Number.MAX_SAFE_INTEGER));
+  }
+  getPreviews() { return [...this.previews.values()].filter(p => !this.doc.getMap('strokes').has(p.stroke.id) && !this.doc.getMap('deleted').has(p.stroke.id)); }
+  getObjects(): BoardObject[] {
+    const objects = new Map(this.doc.getMap<BoardObject>('objects').entries()), deleted = this.doc.getMap<boolean>('deletedObjects');
+    const applied = this.doc.getMap<boolean>('objectMutations');
+    for (const operation of this.pending.values()) {
+      if (applied.has(operation.mutationId)) continue;
+      if (operation.type === 'create-object' && !deleted.has(operation.object.id) && !objects.has(operation.object.id)) objects.set(operation.object.id, operation.object);
+      if (operation.type === 'update-object' && !deleted.has(operation.objectId) && objects.has(operation.objectId)) { const updated = patchObject(objects.get(operation.objectId)!, operation.patch); if (updated) objects.set(operation.objectId, updated); }
+      if (operation.type === 'delete-object') {
+        const all = [...objects.values()];
+        for (const o of all) if (o.kind === 'connector' && (o.fromId === operation.objectId || o.toId === operation.objectId)) {
+          const resolved = resolveObject(o, all);
+          if (resolved.kind === 'connector') objects.set(o.id, { ...resolved, fromId: o.fromId === operation.objectId ? null : o.fromId, toId: o.toId === operation.objectId ? null : o.toId });
+        }
+        objects.delete(operation.objectId);
+      }
+    }
+    return orderedItems([...objects.values()], id => this.doc.getMap<number>('renderOrder').get('objects:' + id) ?? (this.doc.getMap('objects').has(id) ? 0 : Number.MAX_SAFE_INTEGER));
+  }
+  getObjectPreviews() { return [...this.objectPreviews.values()].filter(p => !this.doc.getMap('deletedObjects').has(p.object.id)); }
+  createObject(object: BoardObject) { this.mutate({ type: 'create-object', object, mutationId: newId() }); }
+  updateObject(objectId: string, patch: ObjectPatch) { this.mutate({ type: 'update-object', objectId, patch, mutationId: newId() }); }
+  deleteObject(objectId: string) { this.mutate({ type: 'delete-object', objectId, mutationId: newId() }); }
+  previewObject(object: BoardObject | null) {
+    if (this.state.connection !== 'online' || this.credentials.role !== 'editor') return;
+    if (object && performance.now() - this.lastObjectPreview < 45) return;
+    this.lastObjectPreview = performance.now(); this.send({ type: 'object-preview', object, seq: this.objectSeq++ });
+  }
+  private persistQueue() {
+    try { sessionStorage.setItem(this.queueKey, JSON.stringify([...this.pending.values()])); }
+    catch { this.publish({ error: '本地存储空间不足，请保持页面打开并导出副本' }); }
+  }
+  private mutate(operation: Mutation) {
+    if (this.credentials.role !== 'editor' || this.state.connection === 'denied') return;
+    this.pending.set(operation.mutationId, operation); this.persistQueue(); this.publish(); this.redraw();
+    this.flush();
+  }
+  history(direction: 'undo' | 'redo') { if (this.state.connection === 'online' && !this.pending.size && this.state[direction]) this.mutate({ type: 'history', direction, mutationId: newId() }); }
+  dismissNotice = () => this.publish({ notice: '' });
+  commit(stroke: Stroke) { this.mutate({ type: 'commit', stroke: { ...stroke, points: [...stroke.points] }, mutationId: newId() }); }
+  erase(strokeId: string) { this.mutate({ type: 'delete', strokeId, mutationId: newId() }); }
+  private flush() {
+    if (this.state.connection !== 'online' || this.credentials.role !== 'editor') return;
+    for (const operation of this.pending.values()) {
+      if (this.inFlight.size >= 4) break;
+      if (this.inFlight.has(operation.mutationId)) continue;
+      this.inFlight.add(operation.mutationId); this.send(operation);
+    }
+  }
+  manage(action: 'pause' | 'resume' | 'rotate' | 'remove' | 'end', memberId?: string) { if (this.state.host && this.state.connection === 'online') this.send({ type: 'manage', action, memberId }); }
+  retrySave = () => { this.inFlight.clear(); this.flush(); };
+  presence(cursor: Member['cursor']) {
+    if (this.state.connection !== 'online' || (cursor && performance.now() - this.lastPresence < 40)) return;
+    this.lastPresence = performance.now(); this.send({ type: 'presence', cursor });
+  }
+  preview(stroke: Stroke | null) {
+    if (this.state.connection !== 'online' || this.credentials.role !== 'editor') return;
+    if (stroke && performance.now() - this.lastPreview < 45) return;
+    this.lastPreview = performance.now(); this.send({ type: 'preview', stroke, seq: this.seq++ });
+  }
+  close() {
+    this.stopped = true; clearTimeout(this.timer); clearInterval(this.sweep);
+    window.removeEventListener('offline', this.offline); window.removeEventListener('online', this.online);
+    this.socket?.close(); this.doc.destroy(); this.canvasListeners.clear(); this.uiListeners.clear();
+  }
+}
+
+export function roomLink(credentials: Credentials, viewer = false) {
+  const origin = joinOrigin();
+  if (!origin) return '';
+  const url = new URL('/', origin);
+  url.searchParams.set('room', credentials.roomId);
+  if (viewer) url.searchParams.set('mode', 'tv');
+  url.hash = new URLSearchParams({ token: viewer ? credentials.viewerToken ?? credentials.token : credentials.token }).toString();
+  return url.toString();
+}

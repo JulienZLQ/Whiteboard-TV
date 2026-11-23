@@ -1,0 +1,86 @@
+/* Presentation chrome shares focus, motion and hidden-state behavior on both TV renderers. */
+.tv-visibility-toggle{position:absolute;left:24px;bottom:24px;min-height:46px;padding:12px 20px;border:0;font-size:16px;z-index:3}
+.tv-sync{white-space:nowrap;font-size:14px;color:#667085}.tv-sync:before{content:'✓';color:#2abc79;margin-right:8px}
+.tv-mode>.brand,.tv-mode>.collaboration,.tv-mode>.tv-join,.tv-mode>.zoom-controls,.tv-mode>.empty-state,
+.legacy-tv>.brand,.legacy-tv>.connection,.legacy-tv>#join,.legacy-tv>#empty,.legacy-tv #view-controls{transition:opacity .22s ease,visibility 0s}
+.tv-ui-hidden .tv-mode>:not(.canvas):not(.tv-visibility-toggle),
+.tv-ui-hidden .legacy-tv>.brand,.tv-ui-hidden .legacy-tv>.connection,.tv-ui-hidden .legacy-tv>#join,
+.tv-ui-hidden .legacy-tv>#empty,.tv-ui-hidden .legacy-tv #view-controls{opacity:0;visibility:hidden;pointer-events:none;transition:opacity .22s ease,visibility 0s .22s}
+.tv-mode button:focus,.tv-navigation button:focus,.tv-mode button[aria-pressed=true]:focus,
+.legacy-tv button:focus,.legacy-tv #toggle-qr:focus,.legacy-tv #claim:focus,.legacy-tv #members-close:focus,
+.tv-mode .tv-join .qr-toggle:focus,.tv-mode .tv-join .qr-toggle:hover,
+.legacy-tv #toggle-qr:hover{outline:none;background:#315efb;color:white;box-shadow:0 5px 18px #315efb30}
+.tv-menu{border:0;border-radius:20px;padding:28px;width:440px;max-width:90vw;max-height:85vh;overflow:auto;color:#172033;background:#fff;box-shadow:0 16px 60px #17203330;font:inherit}
+.tv-menu::backdrop{background:#17203366}.tv-menu h2{margin:0 0 18px;font-size:26px}.tv-menu p{color:#667085;line-height:1.6}
+.tv-menu button{display:block;width:100%;padding:14px 18px;margin-top:10px;border:0;border-radius:12px;font:inherit;font-size:18px;text-align:left;background:#f2f4f8;color:#172033;transition:background-color .2s ease,color .2s ease}
+.tv-menu button:focus{outline:none;background:#315efb;color:white}
+.legacy-tv .connection{display:flex;align-items:center;padding:6px 8px;gap:12px;font-size:16px;white-space:nowrap}
+.legacy-tv .connection button{font-size:16px;padding:12px 14px}
+.legacy-tv #saved{position:static;padding:0 4px;font-size:16px;color:#667085;box-shadow:none;background:none}
+.legacy-tv .connection i{margin-right:7px}.legacy-tv #saved:before{margin-right:7px}
+.tv-mode .collaboration{gap:10px}.tv-mode .collaboration .secondary{border:0;white-space:nowrap}
+@media(max-width:1100px){.tv-mode .avatars{display:none}.tv-mode .collaboration{gap:8px}.tv-mode .collaboration .secondary{padding:10px}.tv-mode .connection{font-size:13px}.tv-mode .brand{padding:12px 16px}.tv-mode .brand h1{font-size:20px}}
+@media(prefers-reduced-motion:reduce){.tv-mode>*,.legacy-tv>*,.legacy-tv #view-controls,.tv-menu button{transition:none}}
+
+/* QR panels explicitly declare visibility, so they also need the presentation override. */
+.tv-ui-hidden .tv-mode .tv-qr-content,.tv-ui-hidden .legacy-tv #qr-content{opacity:0;visibility:hidden;transition:opacity .22s ease,visibility 0s .22s}
+.tv-mode .zoom-controls button[aria-pressed=true]:focus{background:#315efb;color:white}
+@media(prefers-reduced-motion:reduce){.tv-ui-hidden .tv-mode>*,.tv-ui-hidden .legacy-tv>*,.tv-ui-hidden .legacy-tv #view-controls,.tv-ui-hidden .tv-mode .tv-qr-content,.tv-ui-hidden .legacy-tv #qr-content{transition:none}}
+
+/* Four separate header surfaces; status labels never enter the remote focus order. */
+.tv-mode .collaboration.tv-header,.legacy-tv .tv-header{padding:0;min-height:0;gap:0;background:transparent;border:0;box-shadow:none}
+.tv-mode .collaboration.tv-header>.tv-header-item,.legacy-tv .tv-header>.tv-header-item,.legacy-tv .tv-header #saved{display:inline-flex;align-items:center;justify-content:center;min-height:52px;margin:0;padding:0 16px;border:0;border-radius:14px;background:#fff;box-shadow:0 4px 16px #1720330b;font-size:16px;white-space:nowrap}
+.tv-mode .collaboration.tv-header>button:focus,.legacy-tv .tv-header>button:focus{background:#315efb;color:white;box-shadow:0 5px 18px #315efb30}
+.tv-mode .collaboration.tv-header>[role=status],.legacy-tv .tv-header>[role=status]{cursor:default;user-select:none}
+/* One shared width per renderer keeps the QR toggle and equal view segments aligned. */
+.tv-mode{--tv-controls-width:208px}.legacy-tv{--tv-controls-width:232px}
+.tv-mode .tv-join,.legacy-tv #join{width:var(--tv-controls-width)}
+.tv-mode .zoom-controls.panel,.legacy-tv #view-controls{width:var(--tv-controls-width);padding:5px;gap:0;border-radius:16px;justify-content:stretch}
+.tv-mode .zoom-controls.panel .view-button,.legacy-tv #view-controls button{flex:1 1 0;width:0;min-width:0;margin:0;padding:12px 2px;font-size:15px;white-space:nowrap;text-align:center}
+@media(max-width:1100px){.tv-mode .collaboration.tv-header>.tv-header-item,.legacy-tv .tv-header>.tv-header-item,.legacy-tv .tv-header #saved{font-size:15px;padding:0 12px}}
+@media(max-width:700px){.tv-mode .zoom-controls.panel{left:auto;right:12px}.tv-mode .collaboration.tv-header{top:84px;right:12px;gap:0}.tv-mode .collaboration.tv-header>.tv-header-item{font-size:12px;padding:0 9px;min-height:42px}.tv-mode .zoom-controls.panel .view-button{font-size:14px}}
+
+/* Flex gap is unsupported by the TV's Chromium 66; margins keep each card separate. */
+.tv-mode .collaboration.tv-header>.tv-header-item+.tv-header-item,.legacy-tv .tv-header>.tv-header-item+.tv-header-item{margin-left:10px}
+@media(max-width:700px){.tv-mode .collaboration.tv-header>.tv-header-item+.tv-header-item{margin-left:6px}}
+
+/* A single highlight travels below both transparent labels, including on quick reversals. */
+.tv-mode .zoom-controls.panel[data-tv-view],.legacy-tv #view-controls[data-tv-view]{isolation:isolate}
+.tv-mode .zoom-controls.panel[data-tv-view]::before,.legacy-tv #view-controls[data-tv-view]::before{content:'';position:absolute;left:5px;top:5px;bottom:5px;width:calc((100% - 10px) / 2);border-radius:12px;background:#315efb;box-shadow:0 4px 12px #315efb26;pointer-events:none;transform:translateX(0);opacity:1;transition:transform .32s cubic-bezier(.22,.8,.25,1),opacity .2s ease;z-index:0}
+.tv-mode .zoom-controls.panel[data-tv-view=content]::before,.legacy-tv #view-controls[data-tv-view=content]::before{transform:translateX(100%)}
+.tv-mode .zoom-controls.panel[data-tv-following=true]::before,.legacy-tv #view-controls[data-tv-following=true]::before{opacity:0}
+.tv-mode .zoom-controls.panel[data-tv-view] .view-button,.legacy-tv #view-controls[data-tv-view] button{position:relative;z-index:1;background:transparent;box-shadow:none;color:#172033;transition:color .22s ease}
+.tv-mode .zoom-controls.panel[data-tv-view] .view-button[aria-pressed=true],.legacy-tv #view-controls[data-tv-view] button[aria-pressed=true]{color:#fff}
+/* Four equal header surfaces remain distinct; only the two action buttons are focusable. */
+.tv-mode .collaboration.tv-header>.tv-header-item,.legacy-tv .tv-header>.tv-header-item,.legacy-tv .tv-header #saved{width:120px;flex:0 0 120px}
+@media(max-width:700px){.tv-mode .collaboration.tv-header>.tv-header-item{width:calc((100vw - 42px) / 4);flex-basis:calc((100vw - 42px) / 4)}}
+@media(prefers-reduced-motion:reduce){.tv-mode .zoom-controls.panel[data-tv-view]::before,.legacy-tv #view-controls[data-tv-view]::before,.tv-mode .zoom-controls.panel[data-tv-view] .view-button,.legacy-tv #view-controls[data-tv-view] button{transition:none}}
+
+.tv-header>.tv-header-item>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tv-header>.tv-header-item>i{flex-shrink:0}
+
+/* A TV action is blue only while the remote focus is on it. */
+.legacy-tv #create,.tv-navigation .welcome-form>.primary{background:#fff;color:#172033;border-color:transparent;box-shadow:0 4px 16px #1720330d;transition:background-color .2s ease,color .2s ease,box-shadow .24s ease}
+.legacy-tv #create:focus,.tv-navigation .welcome-form>.primary:focus{outline:none;background:#315efb;color:#fff;box-shadow:0 5px 18px #315efb30}
+@media(prefers-reduced-motion:reduce){.legacy-tv #create,.tv-navigation .welcome-form>.primary{transition:none}}
+
+/* Status text keeps its original box geometry, without an interactive surface. */
+.tv-mode .collaboration.tv-header>[role=status],.legacy-tv .tv-header>[role=status],.legacy-tv .tv-header #saved{background:transparent;box-shadow:none;border-radius:0}
+.tv-mode .brand h1,.legacy-tv .brand h1{margin:0}
+.tv-mode .tv-qr-content strong{margin:0 0 10px}
+
+/* Equal padding around the title + QR group, including short TV viewports. */
+.tv-mode .tv-qr-content,.legacy-tv #qr-content{padding:16px}
+.tv-mode .tv-qr-content{gap:12px}
+.tv-mode .tv-qr-content strong{margin:0}
+.tv-mode .tv-qr-content img,.legacy-tv #qr-content img{display:block;width:100%;height:auto}
+.legacy-tv #qr-content h2{margin:0 0 12px}
+
+/* Member, settings and confirmation cards share one TV dialog language. */
+dialog.tv-menu,.tv-navigation dialog.room-controls,.tv-mode dialog.room-controls,.legacy-tv #members-panel{width:440px;max-width:calc(100vw - 48px);max-height:calc(100vh - 48px);padding:24px;border:0;border-radius:18px;background:#fff;color:#172033;animation:tv-dialog-appear .18s ease-out}
+dialog.tv-menu h2,.tv-navigation dialog.room-controls h2,.tv-mode dialog.room-controls h2,.legacy-tv #members-panel h2{font-size:26px;margin:0 0 16px}
+dialog.tv-menu p{font-size:18px;line-height:1.5;color:#667085;margin:0 0 16px}
+dialog.tv-menu button{min-height:52px;padding:12px 18px;margin-top:10px;border-radius:12px;font-size:18px;transition:background-color .2s ease,color .2s ease,box-shadow .2s ease}
+dialog.tv-menu h2+button{margin-top:0}
+dialog.tv-menu::backdrop,.tv-navigation dialog.room-controls::backdrop,.tv-mode dialog.room-controls::backdrop{background:#17203355}
+@keyframes tv-dialog-appear{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){dialog.tv-menu,.tv-navigation dialog.room-controls,.tv-mode dialog.room-controls,.legacy-tv #members-panel{animation:none}dialog.tv-menu button{transition:none}}

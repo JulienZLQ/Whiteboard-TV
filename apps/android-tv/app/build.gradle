@@ -1,0 +1,28 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.whiteboardtv.app'
+    compileSdk 35
+    buildToolsVersion "35.0.0"
+    defaultConfig {
+        applicationId 'com.whiteboardtv.app'
+        minSdk 26
+        targetSdk 35
+        versionCode 6
+        versionName '0.3.0-local-preview'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    packaging { jniLibs { useLegacyPackaging true } }
+    buildTypes { release { minifyEnabled false } }
+}
+dependencies { testImplementation 'junit:junit:4.13.2' }
+
+// Fail visibly instead of producing an APK that opens without its local service.
+tasks.register('verifyLocalRuntime') {
+    doLast {
+        ['assets/local-runtime/server.cjs', 'assets/local-runtime/id.txt', 'assets/local-runtime/web/index.html',
+         'jniLibs/armeabi-v7a/libnode.so', 'jniLibs/arm64-v8a/libnode.so', 'jniLibs/x86_64/libnode.so'].each { relative ->
+            if (!file("src/main/$relative").isFile()) throw new GradleException('Run npm run android:prepare before building the local TV APK')
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'verifyLocalRuntime' }

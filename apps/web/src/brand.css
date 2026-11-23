@@ -1,0 +1,8 @@
+/* Approved 01 共写 identity: open frame, two collaborative strokes, no outer tile. */
+.brand .brand-mark, .welcome-brand .brand-mark, .legacy-tv .logo { display: block; object-fit: cover; flex-shrink: 0; padding: 0; background: transparent; }
+.legacy-tv .logo { width: 44px; height: 44px; border-radius: 9px; }
+.welcome .welcome-symbol, .legacy-tv .welcome-mark { display: block; width: 72px; height: 72px; margin: 0 auto; padding: 0; object-fit: cover; border-radius: 16px; background: transparent; }
+.welcome.welcome { background-color: #f7f8fa; background-image: url('/brand/welcome-background-v1.svg'); background-size: cover; background-position: center; }
+.legacy-tv #welcome-backdrop { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; background: #f7f8fa url('/brand/welcome-background-v1.svg') center / cover no-repeat; }
+
+@media(max-aspect-ratio:3/4) { .welcome.welcome { background-image:url("/brand/welcome-background-portrait-v1.svg"); } }

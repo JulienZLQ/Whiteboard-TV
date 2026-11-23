@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f7f8fa"><link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-v1.png"/><link rel="apple-touch-icon" sizes="180x180" href="/brand/apple-touch-v1.png"/><title>共创白板 · 电视</title></head>
+<body class="legacy-tv"><canvas id="board" aria-label="电视白板总览"></canvas>
+<div id="welcome-backdrop" aria-hidden="true"></div>
+<header class="panel brand"><img class="logo" src="/brand/co-write-icon-v1.svg" alt=""><div><h1>共创白板</h1></div></header>
+<div class="connection tv-header"><span class="tv-header-item" id="saved" role="status">实时同步</span><span class="tv-header-item" id="connection-state" role="status"><i id="status-dot"></i><span id="status">准备就绪</span></span><button class="tv-header-item" data-tv-row="header" id="manage-members" hidden>管理成员</button><button class="tv-header-item" data-tv-row="header" id="tv-settings">设置</button></div>
+<section id="welcome"><img class="welcome-mark" src="/brand/co-write-icon-v1.svg" alt=""><h2>让每个想法，都被看见</h2><p>创建白板，邀请手机 / Pad 扫码共创</p><button id="create" class="primary" data-tv-row="welcome">创建电视白板</button><p id="error" role="alert"></p></section>
+<aside id="join" hidden><div id="qr-content" class="panel" aria-hidden="false"><h2 id="qr-title">扫码，一起写</h2><img id="qr" width="200" height="200" alt="电视编辑加入二维码"><p id="qr-hint" role="status" hidden></p></div><button data-tv-row="join" id="toggle-qr" aria-controls="qr-content" aria-expanded="true">收起二维码</button></aside>
+<div id="empty" hidden><h2>等待第一个想法</h2><p>每一笔、每张便签，都会出现在这里</p></div>
+<footer id="footer" hidden><button class="tv-visibility-toggle panel" data-tv-row="visibility" id="toggle-ui" aria-pressed="false">隐藏界面</button><div id="view-controls" class="panel" data-tv-view="canvas" data-tv-following="false"><button data-tv-row="view" id="canvas-view" aria-pressed="true">完整画布</button><button data-tv-row="view" id="fit" aria-pressed="false">显示全部内容</button></div></footer>
+<section id="members-panel" class="panel" role="dialog" aria-modal="true" aria-label="管理成员" hidden><h2>管理成员</h2><div id="members-list"></div><button id="members-close">关闭管理</button></section>
+<script type="module" src="/src/legacy-tv.ts"></script></body></html>

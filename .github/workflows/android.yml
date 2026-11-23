@@ -1,0 +1,40 @@
+name: Verify Android TV
+on:
+  push:
+    paths: ['apps/**', 'packages/**', 'scripts/prepare-android-local.mjs', 'assets/licenses/**', 'package*.json', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['apps/**', 'packages/**', 'scripts/prepare-android-local.mjs', 'assets/licenses/**', 'package*.json', '.github/workflows/android.yml']
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prepare bundled local host
+        run: |
+          curl -fL --retry 3 https://github.com/nodejs-mobile/nodejs-mobile/releases/download/v18.20.4/nodejs-mobile-v18.20.4-android.zip -o "$RUNNER_TEMP/node-mobile.zip"
+          echo "bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af  $RUNNER_TEMP/node-mobile.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/node-mobile.zip" -d "$RUNNER_TEMP/node-mobile"
+          export LOCAL_NODE_HOME="$RUNNER_TEMP/node-mobile"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+          npm run android:prepare
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - run: gradle -p apps/android-tv :app:assembleDebug :app:testDebugUnitTest :app:lintDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Whiteboard-TV-preview-apk
+          path: apps/android-tv/app/build/outputs/apk/debug/app-debug.apk
