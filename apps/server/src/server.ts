@@ -28,7 +28,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
       if (req.headers['x-whiteboard-client'] !== '1' || creating >= 4) { res.writeHead(403).end(); return; }
       creating++;
       try {
-        const room = await store.create();
+        const room = await store.create(url.searchParams.get('mode') === 'tv');
         res.setHeader('Cache-Control', 'no-store'); res.setHeader('Content-Type', 'application/json');
         res.writeHead(201).end(JSON.stringify({ roomId: room.id, token: room.editorToken, viewerToken: room.viewerToken, role: url.searchParams.get('mode') === 'tv' ? 'viewer' : 'editor' }));
       } catch { res.writeHead(503).end(JSON.stringify({ error: '无法创建房间，请稍后重试' })); }
@@ -137,8 +137,10 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
             if (claim || joining) {
               if (!claim && room.access.editors.length >= 256) { ws.close(1008, 'Room full'); return; }
               const previous = room.access;
-              token = claim ? room.access.hostToken : secret(); host = claim; role = 'editor';
-              room.access = { ...previous, editors: claim ? previous.editors : [...previous.editors, token], claimToken: claim ? '' : previous.claimToken };
+              // Serialized with credential persistence: exactly one editing join wins.
+              const grantHost = claim || (joining && previous.autoHostPending === true && !hello.viewOnly && !hello.legacyTV);
+              token = grantHost ? room.access.hostToken : secret(); host = grantHost; role = 'editor';
+              room.access = { ...previous, editors: grantHost ? previous.editors : [...previous.editors, token], claimToken: grantHost ? '' : previous.claimToken, autoHostPending: grantHost ? false : previous.autoHostPending };
               try { await store.save(room, room.doc); } catch (e) { room.access = previous; throw e; }
             }
             if (ws.readyState !== WebSocket.OPEN) return;

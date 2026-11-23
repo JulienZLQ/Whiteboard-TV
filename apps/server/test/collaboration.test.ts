@@ -97,7 +97,7 @@ test('host lifecycle: personal credentials, pause, rotation, revocation, one-tim
   let app = createWhiteboardServer({ dataDir: directory }), port = await app.listen(0);
   const clients: Awaited<ReturnType<typeof client>>[] = [];
   try {
-    const room = await fetch(`http://127.0.0.1:${port}/api/rooms?mode=tv`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    const room = await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
     const host = await client(port, room, 'Host'); clients.push(host);
     assert.equal(host.ready.host, true);
     const invitation = host.ready.access!.inviteToken;
@@ -348,4 +348,44 @@ test('failed history persistence leaves the document and undo stack intact until
     a.send(command); await a.wait('saved', m => m.mutationId === command.mutationId);
     assert.equal(a.doc.getMap('strokes').size, 0);
   } finally { a?.ws.terminate(); a?.doc.destroy(); await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test('TV first editor hosting is atomic, persists across restart and is not reset by rotation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'whiteboard-auto-host-'));
+  let app = createWhiteboardServer({ dataDir: directory }), port = await app.listen(0);
+  const clients: Awaited<ReturnType<typeof client>>[] = [];
+  const add = async (credentials: Credentials, name: string, legacy = false) => { const c = await client(port, credentials, name, legacy); clients.push(c); return c; };
+  try {
+    const room = await fetch(`http://127.0.0.1:${port}/api/rooms?mode=tv`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    const tv = await add(room, 'TV', true), invitation = tv.ready.access!.inviteToken;
+    const stored = await app.store.get(room.roomId);
+    assert.equal(stored.access.autoHostPending, true);
+    const watcher = await add({ ...room, token: invitation }, 'Read only', true);
+    assert.equal(watcher.ready.host, false);
+    assert.equal(stored.access.autoHostPending, true);
+    tv.send({ type: 'manage', action: 'pause' }); await tv.wait('access', m => m.access.paused);
+    assert.equal(await rejected(port, room.roomId, invitation), 1008);
+    assert.equal(stored.access.autoHostPending, true);
+    tv.inbox.length = 0;
+    tv.send({ type: 'manage', action: 'resume' }); await tv.wait('access', m => !m.access.paused);
+    const save = app.store.save.bind(app.store);
+    app.store.save = async () => { throw new Error('simulated persistence failure'); };
+    assert.equal(await rejected(port, room.roomId, invitation), 1008);
+    assert.equal(stored.access.autoHostPending, true);
+    app.store.save = save;
+    const joined = await Promise.all([add({ ...room, token: invitation }, 'First'), add({ ...room, token: invitation }, 'Second')]);
+    assert.equal(joined.filter(c => c.ready.host).length, 1);
+    const host = joined.find(c => c.ready.host)!, guest = joined.find(c => !c.ready.host)!;
+    assert.equal(stored.access.autoHostPending, false);
+    assert.equal(stored.access.claimToken, '');
+    guest.send({ type: 'manage', action: 'end' }); assert.match((await guest.wait('error')).message, /仅主持人/);
+    host.send({ type: 'manage', action: 'rotate' });
+    const rotated = (await host.wait('access', m => m.access.inviteToken !== invitation)).access;
+    assert.equal((await add({ ...room, token: rotated.inviteToken }, 'Later')).ready.host, false);
+    for (const c of clients) c.ws.terminate(); await app.close();
+    app = createWhiteboardServer({ dataDir: directory }); port = await app.listen(0);
+    assert.equal((await add({ ...room, token: host.ready.token! }, 'Host reconnect')).ready.host, true);
+    assert.equal((await add({ ...room, token: guest.ready.token! }, 'Guest reconnect')).ready.host, false);
+    assert.equal((await add({ ...room, token: rotated.inviteToken }, 'After restart')).ready.host, false);
+  } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
 });

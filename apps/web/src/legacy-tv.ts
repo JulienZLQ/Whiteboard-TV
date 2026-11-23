@@ -8,7 +8,7 @@ import { ImageCache } from './images';
 // A dedicated read-only receiver avoids loading the modern editor/Yjs runtime on old TV WebViews.
 const get = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = get<HTMLCanvasElement>('board'), ctx = canvas.getContext('2d')!;
-const create = get<HTMLButtonElement>('create'), claim = get<HTMLButtonElement>('claim');
+const create = get<HTMLButtonElement>('create');
 let credentials: Credentials | null = null, socket: WebSocket | null = null, access: AccessState | undefined;
 let snapshot: BoardSnapshot = { strokes: [], objects: [] }, members: Member[] = [];
 const previews = new Map<string, { stroke: Stroke; time: number }>(), objectPreviews = new Map<string, { object: BoardObject; time: number }>();
@@ -39,7 +39,7 @@ function updateQR() {
   const available = connected && access && !access.paused && !access.ended && Date.now() < access.expiresAt;
   get('join').hidden = !credentials;
   const image = get<HTMLImageElement>('qr');
-  claim.hidden = !connected || !access?.claimToken;
+  get('qr-hint').hidden = !!available;
   if (!available) {
     image.hidden = true; qrKey = ''; qrVersion++;
     get('qr-hint').textContent = access?.ended ? '本次会话已结束' : connected ? '加入已暂停或邀请已过期' : '连接恢复后显示二维码';
@@ -49,15 +49,13 @@ function updateQR() {
   const token = claimMode ? access!.claimToken! : access!.inviteToken;
   const url = location.origin + '/?room=' + credentials!.roomId + '#token=' + token;
   get('qr-title').textContent = claimMode ? '手机认领主持权限' : '扫码，一起写';
-  get('qr-hint').textContent = claimMode ? '请由主持人扫描此二维码' : '手机 / Pad 独立编辑';
-  claim.textContent = claimMode ? '返回编辑二维码' : '手机管理';
   image.alt = claimMode ? '手机主持认领二维码' : '电视编辑加入二维码';
   if (url === qrKey) { image.hidden = false; return; }
   qrKey = url; image.hidden = true; const version = ++qrVersion;
   QRCode.toDataURL(url, { width: 200, margin: 2 }).then(value => {
     if (version !== qrVersion) return;
     image.src = value; image.hidden = false;
-  }).catch(() => { qrKey = ''; get('qr-hint').textContent = '二维码生成失败，稍后自动重试'; });
+  }).catch(() => { qrKey = ''; get('qr-hint').hidden = false; get('qr-hint').textContent = '二维码生成失败，稍后自动重试'; });
 }
 function receive(message: ServerMessage) {
   if (message.type === 'ready') {
@@ -97,7 +95,6 @@ create.onclick = async () => {
     credentials = await response.json(); persist(); showBoard(); connect();
   } catch { get('error').textContent = '创建失败，请检查服务后重试'; create.disabled = false; create.focus(); }
 };
-claim.onclick = () => { claimMode = !claimMode; updateQR(); };
 get('toggle-qr').onclick = () => {
   qrHidden = !qrHidden; get('qr-content').setAttribute('aria-hidden', String(qrHidden));
   get('join').className = qrHidden ? 'collapsed' : '';
@@ -110,7 +107,6 @@ function updateViewControls() {
 
   get('canvas-view').setAttribute('aria-pressed', String(!focusedMember && viewMode === 'canvas'));
   get('fit').setAttribute('aria-pressed', String(!focusedMember && viewMode === 'content'));
-  get('view-label').textContent = focusedMember ? '电视视图 · 关注成员' : viewMode === 'canvas' ? '电视视图 · 完整画布' : '电视视图 · 全部内容';
 }
 function closeMembers() { get('members-panel').hidden = true; get('manage-members').focus(); }
 function showMembers() {

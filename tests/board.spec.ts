@@ -79,7 +79,7 @@ test('mobile two-finger gesture cancels an uncommitted pen stroke', async ({ bro
 });
 
 
-test('TV creates a room, phone joins and claims hosting, removed credentials stay revoked', async ({ browser, page }) => {
+test('TV creates a room, first phone becomes host, removed guest credentials stay revoked', async ({ browser, page }) => {
   const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.goto('/?mode=tv');
@@ -96,6 +96,7 @@ test('TV creates a room, phone joins and claims hosting, removed credentials sta
   await phone.goto(invitation); await phone.getByPlaceholder('怎么称呼你？').fill('手机成员');
   await phone.getByRole('button', { name: '加入白板', exact: true }).click();
   await expect(phone.getByRole('toolbar')).toBeVisible();
+  await expect(phone.getByRole('button', { name: '管理', exact: true })).toBeVisible();
   await phone.mouse.move(140, 340); await phone.mouse.down(); await phone.mouse.move(240, 450, { steps: 20 });
   await expect(page.getByTestId('canvas')).toHaveAttribute('data-preview-count', '1');
   await phone.mouse.up(); await expect(page.getByTestId('canvas')).toHaveAttribute('data-stroke-count', '1');
@@ -114,14 +115,15 @@ test('TV creates a room, phone joins and claims hosting, removed credentials sta
   await page.getByRole('button', { name: '暂停加入', exact: true }).click();
   await expect(page.getByRole('button', { name: '恢复加入' })).toBeVisible();
   await page.getByRole('button', { name: '恢复加入' }).click();
+  const guest = await phoneContext.newPage(); await guest.goto(invitation);
+  await guest.getByPlaceholder('怎么称呼你？').fill('普通成员'); await guest.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(guest.getByRole('toolbar')).toBeVisible();
+  await expect(guest.getByRole('button', { name: '管理', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '移除', exact: true }).click();
-  await expect(phone.getByRole('alert')).toContainText('成员已被移除');
-  await phone.reload(); await phone.getByRole('button', { name: '加入白板', exact: true }).click();
-  await expect(phone.getByRole('alert')).toContainText('成员已被移除');
-  await page.getByRole('button', { name: '手机认领主持权限' }).click();
-  const claim = await page.locator('#invite-link').inputValue();
-  const host = await phoneContext.newPage(); await host.goto(claim);
-  await host.getByPlaceholder('怎么称呼你？').fill('手机主持'); await host.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(guest.getByRole('alert')).toContainText('成员已被移除');
+  await guest.reload(); await guest.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(guest.getByRole('alert')).toContainText('成员已被移除');
+  const host = phone;
   await expect(host.getByRole('button', { name: '管理', exact: true })).toBeVisible();
   await host.getByRole('button', { name: '管理', exact: true }).click();
   await host.getByRole('button', { name: '结束会话', exact: true }).click();
@@ -282,10 +284,9 @@ test('legacy TV creates a room, receives phone previews and restores through rel
   await editor.mouse.move(400, 560); await editor.mouse.down(); await editor.mouse.move(650, 560, { steps: 10 });
   await expect(page.locator('#board')).toHaveAttribute('data-preview-count', '1'); await editor.mouse.up();
   await expect(page.locator('#board')).toHaveAttribute('data-stroke-count', '1');
-  await page.getByRole('button', { name: '手机管理', exact: true }).click();
-  await expect(page.getByAltText('手机主持认领二维码')).toBeVisible();
-  await page.evaluate(() => window.WhiteboardTV!.back());
-  await expect(page.getByAltText('电视编辑加入二维码')).toBeVisible();
+  await expect(editor.getByRole('button', { name: '管理', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '手机管理', exact: true })).toHaveCount(0);
+  await expect(page.locator('#qr-content')).toHaveText('扫码，一起写');
   await page.reload(); await expect(page.locator('#board')).toHaveAttribute('data-object-count', '1');
   await expect(page.locator('#board')).toHaveAttribute('data-stroke-count', '1');
   await expect(page.getByText('实时连接', { exact: true })).toBeVisible();

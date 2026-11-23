@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import * as Y from 'yjs';
 
-export type Access = { hostToken: string; inviteToken: string; claimToken: string; expiresAt: number; paused: boolean; ended: boolean; editors: string[] };
+export type Access = { hostToken: string; inviteToken: string; claimToken: string; expiresAt: number; paused: boolean; ended: boolean; editors: string[]; autoHostPending?: boolean };
 export const secret = () => randomBytes(32).toString('hex');
 function freshAccess(hostToken: string): Access { return { hostToken, inviteToken: secret(), claimToken: secret(), expiresAt: Date.now() + 12 * 60 * 60 * 1000, paused: false, ended: false, editors: [] }; }
 export type Room = { id: string; access: Access; editorToken: string; viewerToken: string; doc: Y.Doc; queue: Promise<void> };
@@ -13,10 +13,11 @@ export class RoomStore {
   readonly rooms = new Map<string, Room>();
   private loads = new Map<string, Promise<Room>>();
   constructor(readonly directory: string) {}
-  async create() {
+  async create(tv = false) {
     if (this.rooms.size >= 64) throw new Error('实验服务房间数已达上限');
     const room: Room = { access: freshAccess(secret()), id: randomBytes(12).toString('hex'), editorToken: randomBytes(32).toString('hex'), viewerToken: randomBytes(32).toString('hex'), doc: new Y.Doc(), queue: Promise.resolve() };
     room.access.hostToken = room.editorToken;
+    room.access.autoHostPending = tv;
     await this.save(room, room.doc);
     this.rooms.set(room.id, room);
     return room;
