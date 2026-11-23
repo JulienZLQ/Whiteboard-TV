@@ -67,3 +67,10 @@
 .tv-mode .collaboration.tv-header>[role=status],.legacy-tv .tv-header>[role=status],.legacy-tv .tv-header #saved{background:transparent;box-shadow:none;border-radius:0}
 .tv-mode .brand h1,.legacy-tv .brand h1{margin:0}
 .tv-mode .tv-qr-content strong{margin:0 0 10px}
+
+/* Equal padding around the title + QR group, including short TV viewports. */
+.tv-mode .tv-qr-content,.legacy-tv #qr-content{padding:16px}
+.tv-mode .tv-qr-content{gap:12px}
+.tv-mode .tv-qr-content strong{margin:0}
+.tv-mode .tv-qr-content img,.legacy-tv #qr-content img{display:block;width:100%;height:auto}
+.legacy-tv #qr-content h2{margin:0 0 12px}
