@@ -1,3 +1,4 @@
+import { openTVMenu, closeTVDialog, browserTVBack } from './tv-menu';
 import { rowNavigation, fitTVContent } from './tv-layout';
 import QRCode from 'qrcode';
 import { resolveObject, canvasBounds, DEFAULT_CANVAS, contentBounds, fitCamera, objectLayout, type AccessState, type BoardObject, type BoardSnapshot, type Credentials, type Member, type Camera, type Point, type ServerMessage, type Stroke } from '@whiteboard/board-core';
@@ -14,7 +15,7 @@ const previews = new Map<string, { stroke: Stroke; time: number }>(), objectPrev
 let viewMode: 'canvas' | 'content' = 'canvas';
 let camera: Camera | null = null, lastFrame = 0;
 let frame = 0, retryTimer = 0, retry = 500, stopped = false, connected = false, claimMode = false, qrKey = '', qrVersion = 0;
-let qrHidden = false, focusedMember = '';
+let qrHidden = false, uiHidden = false, focusedMember = '';
 let focusedPoint: Point | null = null;
 const navigateRow = rowNavigation();
 const images = new ImageCache(() => credentials!, schedule);
@@ -32,7 +33,7 @@ function status(text: string, online = false) {
   get('status').textContent = text; get('status-dot').style.background = online ? '#2abc79' : '#e9a23b';
   get('saved').textContent = online ? '实时同步' : text;
 }
-function showBoard() { get('welcome').hidden = true; get('footer').hidden = false; get('canvas-view').focus(); schedule(); }
+function showBoard() { get('welcome').hidden = true; get('footer').hidden = false; get('manage-members').hidden = false; get('canvas-view').focus(); schedule(); }
 function updateQR() {
   const available = connected && access && !access.paused && !access.ended && Date.now() < access.expiresAt;
   get('join').hidden = !credentials;
@@ -126,9 +127,20 @@ function showMembers() {
   get('members-panel').hidden = false; (list.querySelector('button') || get('members-close')).focus();
 }
 get('manage-members').onclick = showMembers;
+get('tv-settings').onclick = openTVMenu;
+get('toggle-ui').onclick = () => {
+  uiHidden = !uiHidden;
+  document.documentElement.classList.toggle('tv-ui-hidden', uiHidden);
+  get('toggle-ui').textContent = uiHidden ? '显示界面' : '隐藏界面';
+  get('toggle-ui').setAttribute('aria-pressed', String(uiHidden));
+  get('toggle-ui').focus(); schedule();
+};
 get('members-close').onclick = closeMembers;
 get('canvas-view').onclick = () => { viewMode = 'canvas'; focusedMember = ''; focusedPoint = null; updateViewControls(); schedule(); };
 get('fit').onclick = () => { viewMode = 'content'; focusedMember = ''; focusedPoint = null; updateViewControls(); schedule(); };
+
+get('canvas-view').onfocus = () => get('canvas-view').click();
+get('fit').onfocus = () => get('fit').click();
 
 function schedule() { if (!frame) frame = requestAnimationFrame(paint); }
 function stroke(s: Stroke) {
@@ -172,13 +184,13 @@ function paint() {
   const visible = Array.from(merged.values());
   const bounds = contentBounds(snapshot.strokes.concat(active), visible);
   const b = viewMode === 'canvas' ? canvasBounds(bounds) : bounds ?? DEFAULT_CANVAS;
-  const target = viewMode === 'content' ? fitTVContent(b, width, height, !qrHidden) : fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], { width: Math.max(100, width - (qrHidden ? 0 : 290)), height: Math.max(100, height - 240) }, 32);
-  if (viewMode === 'canvas') target.y += 110;
+  const target = (viewMode === 'content' || uiHidden) ? fitTVContent(b, width, height, !qrHidden) : fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], { width: Math.max(100, width - (qrHidden || uiHidden ? 0 : 290)), height: Math.max(100, height - 240) }, 32);
+  if (viewMode === 'canvas' && !uiHidden) target.y += 110;
   const focused = members.find(m => m.id === focusedMember);
   if (focused?.cursor) focusedPoint = focused.cursor;
   if (!focused) focusedPoint = null;
   const cursor = focusedPoint;
-  if (cursor) { target.zoom = 1; target.x = (width - (qrHidden ? 0 : 290)) / 2 - cursor.x; target.y = height / 2 - cursor.y; }
+  if (cursor) { target.zoom = 1; target.x = (width - (qrHidden || uiHidden ? 0 : 290)) / 2 - cursor.x; target.y = height / 2 - cursor.y; }
   const now = performance.now(), alpha = 1 - Math.exp(-Math.min(48, now - lastFrame) / 90); lastFrame = now;
   const moving = !!camera && (Math.abs(camera.x - target.x) > .1 || Math.abs(camera.y - target.y) > .1 || Math.abs(camera.zoom - target.zoom) > .0001);
   canvas.dataset.cameraMoving = String(moving);
@@ -201,7 +213,7 @@ function paint() {
   });
   get('empty').hidden = !credentials || snapshot.strokes.length + snapshot.objects.length + active.length + activeObjects.length > 0;
   canvas.dataset.connectors = JSON.stringify(visible.filter(o => o.kind === 'connector').map(o => resolveObject(o, visible)));
-  canvas.dataset.viewMode = focusedMember ? 'member' : viewMode; canvas.dataset.viewWidth = String(width - (qrHidden ? 0 : 290)); canvas.dataset.camera = JSON.stringify(viewCamera); canvas.dataset.joinVisible = String(!qrHidden); canvas.dataset.focusedMember = focusedMember; canvas.dataset.loadedImageCount = String(images.loaded);
+  canvas.dataset.viewMode = focusedMember ? 'member' : viewMode; canvas.dataset.viewWidth = String(width - (qrHidden || uiHidden ? 0 : 290)); canvas.dataset.camera = JSON.stringify(viewCamera); canvas.dataset.joinVisible = String(!qrHidden && !uiHidden); canvas.dataset.focusedMember = focusedMember; canvas.dataset.loadedImageCount = String(images.loaded);
   canvas.dataset.strokeCount = String(snapshot.strokes.length); canvas.dataset.objectCount = String(snapshot.objects.length);
   canvas.dataset.previewCount = String(active.length); canvas.dataset.objectPreviewCount = String(activeObjects.length);
   canvas.dataset.cursorCount = String(members.filter(m => m.cursor).length);
@@ -215,7 +227,7 @@ setInterval(() => {
 window.addEventListener('resize', schedule);
 window.WhiteboardTV = {
   key(key: string) {
-    const buttons = Array.from((get('members-panel').hidden ? document : get('members-panel')).querySelectorAll<HTMLButtonElement>('button')).filter(b => !b.disabled && b.getClientRects().length > 0 && !b.closest('[aria-hidden="true"]'));
+    const buttons = Array.from((document.querySelector('dialog[open]') || (get('members-panel').hidden ? document : get('members-panel'))).querySelectorAll<HTMLButtonElement>('button')).filter(b => (!uiHidden || !!b.closest('dialog') || b.id === 'toggle-ui') && !b.disabled && b.getClientRects().length > 0 && getComputedStyle(b).visibility !== 'hidden' && !b.closest('[aria-hidden="true"]'));
     if (!buttons.length) return false;
     const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
     if (key === 'Enter') { if (index < 0) buttons[0].focus(); else buttons[index].click(); return true; }
@@ -224,8 +236,8 @@ window.WhiteboardTV = {
     if (!direction) return false;
     buttons[(index + direction + buttons.length) % buttons.length].focus(); return true;
   },
-  back() { if (!get('members-panel').hidden) { closeMembers(); return true; } if (claimMode) { claimMode = false; updateQR(); return true; } return false; },
+  back() { if (closeTVDialog()) return true; if (!get('members-panel').hidden) { closeMembers(); return true; } if (claimMode) { claimMode = false; updateQR(); return true; } return false; },
 };
-window.addEventListener('keydown', e => { if (e.key === 'Escape' ? window.WhiteboardTV!.back() : window.WhiteboardTV!.key(e.key)) e.preventDefault(); });
+window.addEventListener('keydown', e => { if (e.key === 'Escape' ? (window.WhiteboardTV!.back() || browserTVBack()) : window.WhiteboardTV!.key(e.key)) e.preventDefault(); });
 if (credentials) { showBoard(); connect(); } else create.focus();
 schedule();

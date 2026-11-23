@@ -30,6 +30,7 @@
 14. [电视按钮状态、固定二维码与画布范围](docs/14-tv-controls.md)
 15. [形状、箭头与对象连接](docs/15-shapes-connectors.md)
 16. [协作撤销、PNG 导出与电视方向导航](docs/16-history-export-navigation.md)
+17. [电视隐藏界面、设置菜单与退出确认](docs/17-tv-presentation.md)
 
 ## 推进方式
 

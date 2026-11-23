@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { ImageDown, Undo2, Redo2, Check, Monitor, UserPlus, Minus, Plus, Scan, Download, RefreshCw, WifiOff } from 'lucide-react';
+import { openTVMenu } from '../tv-menu';
 import { androidTV } from '../tv';
 import { COLORS, isTextObject, isResizable, type Camera, type TextObject } from '@whiteboard/board-core';
 import { BoardEngine, type Tool } from '../canvas/engine';
@@ -23,6 +24,7 @@ export function Board({ session }: { session: BoardSession }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false), [imageError, setImageError] = useState(''), [joinHidden, setJoinHidden] = useState(false);
   const [focus, setFocus] = useState('');
+  const [uiHidden, setUIHidden] = useState(false);
   const [viewMode, setViewMode] = useState<'canvas' | 'content'>('canvas');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [manage, setManage] = useState(false);
@@ -86,19 +88,27 @@ export function Board({ session }: { session: BoardSession }) {
     finally { setExporting(false); }
   }
   const selectedObject = session.getObjects().find(o => o.id === selected);
-  const joinVisible = viewer && !joinHidden && !!state.access && state.connection === 'online';
+  const joinVisible = viewer && !uiHidden && !joinHidden && !!state.access && state.connection === 'online';
   useEffect(() => { engine.current?.setJoinVisible(joinVisible); }, [joinVisible]);
+  useEffect(() => {
+    document.documentElement.classList.toggle('tv-ui-hidden', viewer && uiHidden);
+    engine.current?.refreshTVLayout();
+    return () => { document.documentElement.classList.remove('tv-ui-hidden'); };
+  }, [viewer, uiHidden]);
+  const chooseView = (value: 'canvas' | 'content') => { setFocus(''); setViewMode(value); if (value === 'canvas') engine.current?.showCanvas(); else engine.current?.fit(); };
   const status = state.connection === 'denied' ? '无法连接' : state.connection === 'offline' ? '连接中断' : state.connection === 'connecting' ? '正在连接' : '实时连接';
   return <main className={`board ${viewer ? 'tv-mode' : ''}`}>
     <div ref={container} className="canvas" data-testid="canvas" aria-label={viewer ? '电视白板总览' : '白板绘图区'} style={{ cursor: viewer ? 'default' : tool === 'hand' ? 'grab' : tool === 'select' ? 'default' : tool === 'text' ? 'text' : 'crosshair' }}/>
     <header className="brand panel"><div className="brand-mark" aria-hidden="true">W</div><div><h1>共创白板</h1><p>{viewer ? focus ? '电视视图 · 关注成员' : viewMode === 'canvas' ? '电视视图 · 完整画布' : '电视视图 · 全部内容' : '每个人的想法，都在这里'}</p></div></header>
     <div className="collaboration panel">
       <div className="avatars" aria-label={`${state.members.length} 台设备在线`}>{state.members.slice(0, 3).map(member => <span key={member.id} title={`${member.name}${member.role === 'viewer' ? ' · 观看' : ''}`} style={{ backgroundColor: member.color }}>{member.role === 'viewer' ? <Monitor size={17}/> : member.name.slice(0, 1)}</span>)}</div>
+      {viewer ? <span className="tv-sync" role="status">{state.connection === 'online' ? '实时同步' : '等待同步'}</span> : null}
       <span className={`connection ${state.connection}`} role="status"><i/>{status}</span>
       <span className="header-divider"/>
       {!viewer && state.connection === 'online' ? <a aria-label="电视视图" className="secondary tv-link" href={roomLink(session.credentials, true)} target="_blank" rel="noreferrer"><Monitor size={19}/><span>电视视图</span></a> : null}
-      {state.host ? <button className="secondary manage-button" onClick={() => setManage(true)}>管理</button> : null}
-      <button disabled={state.connection !== 'online' || !state.access || state.access.paused || state.access.ended} className="primary invite-button" onClick={() => setInvite(true)}><UserPlus size={19}/><span>{state.access?.paused ? '加入已暂停' : '邀请加入'}</span></button>
+      {!viewer && state.host ? <button className="secondary manage-button" onClick={() => setManage(true)}>管理</button> : null}
+      {viewer ? <><button data-tv-row="header" className="secondary" onClick={() => setManage(true)}>管理成员</button><button data-tv-row="header" className="secondary" onClick={openTVMenu}>设置</button></> : null}
+      {!viewer ? <button disabled={state.connection !== 'online' || !state.access || state.access.paused || state.access.ended} className="primary invite-button" onClick={() => setInvite(true)}><UserPlus size={19}/><span>{state.access?.paused ? '加入已暂停' : '邀请加入'}</span></button> : null}
     </div>
     {viewer && state.access && state.connection === 'online' ? <TVJoinCard access={state.access} credentials={session.credentials} hidden={joinHidden} onToggle={() => setJoinHidden(!joinHidden)}/> : null}
     {empty ? <div className="empty-state"><PencilMark/><h2>{viewer ? '等待第一个想法' : '从一笔开始'}</h2><p>{viewer ? '编辑端的每一笔，都会出现在这里' : '写下文字、贴一张便签，或自由书写'}</p><span>{viewer ? '默认展示完整画布' : '双指移动与缩放 · 每个人都有独立视角'}</span></div> : null}
@@ -112,15 +122,14 @@ export function Board({ session }: { session: BoardSession }) {
     {!viewer ? <div className="history-controls panel" aria-label="操作历史"><button className="icon-button" aria-label="撤销" title="撤销 (Ctrl/⌘ Z)" disabled={!state.undo || !!state.pending || state.connection !== 'online'} onClick={() => session.history('undo')}><Undo2 size={20}/></button><button className="icon-button" aria-label="重做" title="重做 (Ctrl/⌘ Shift Z)" disabled={!state.redo || !!state.pending || state.connection !== 'online'} onClick={() => session.history('redo')}><Redo2 size={20}/></button></div> : null}
     {state.notice ? <div className="history-notice panel" role="status"><span>{state.notice}</span><button className="secondary" onClick={session.dismissNotice}>知道了</button></div> : null}
     {exportOpen ? <div className="export-menu panel" role="group" aria-label="导出白板"><strong>导出 PNG 图片</strong><button className="secondary" disabled={exporting} onClick={() => void exportPNG('canvas')}>导出完整画布</button><button className="secondary" disabled={exporting} onClick={() => void exportPNG('content')}>导出全部内容</button><small>{exporting ? '正在生成图片…' : '白色背景 · 最长边 4096 像素'}</small><button className="secondary" disabled={exporting} onClick={() => setExportOpen(false)}>关闭导出</button></div> : null}
-    <footer className="save-status panel" aria-live="polite">{state.connection !== 'online' ? <WifiOff size={18}/> : <Check size={18}/>}<span>{state.pending ? `${state.pending} 项待保存` : state.connection === 'online' ? '已保存' : '等待连接'}</span>{!androidTV() ? <button className="icon-button export" aria-label="导出本地副本" title="导出本地副本" onClick={exportCopy}><Download size={17}/></button> : null}{!androidTV() ? <button className="secondary png-export" aria-label="导出图片" title="导出图片" aria-expanded={exportOpen} onClick={() => setExportOpen(!exportOpen)}><ImageDown size={17}/><span>导出图片</span></button> : null}</footer>
+    {!viewer ? <footer className="save-status panel" aria-live="polite">{state.connection !== 'online' ? <WifiOff size={18}/> : <Check size={18}/>}<span>{state.pending ? `${state.pending} 项待保存` : state.connection === 'online' ? '已保存' : '等待连接'}</span>{!androidTV() ? <button className="icon-button export" aria-label="导出本地副本" title="导出本地副本" onClick={exportCopy}><Download size={17}/></button> : null}{!androidTV() ? <button className="secondary png-export" aria-label="导出图片" title="导出图片" aria-expanded={exportOpen} onClick={() => setExportOpen(!exportOpen)}><ImageDown size={17}/><span>导出图片</span></button> : null}</footer> : <button className="tv-visibility-toggle panel secondary" data-tv-row="visibility" aria-pressed={uiHidden} onClick={() => setUIHidden(!uiHidden)}>{uiHidden ? '显示界面' : '隐藏界面'}</button>}
     <div className="zoom-controls panel" aria-label="画布视角">
-      {viewer ? <button data-tv-row="view" className="secondary view-button" onClick={() => setManage(true)}>管理成员</button> : null}
-      {viewer ? <button data-tv-row="view" className="secondary view-button" aria-pressed={!focus && viewMode === 'canvas'} onClick={() => { setFocus(''); setViewMode('canvas'); engine.current?.showCanvas(); }}>完整画布</button> : null}
+      {viewer ? <button data-tv-row="view" className="secondary view-button" aria-pressed={!focus && viewMode === 'canvas'} onFocus={() => chooseView('canvas')} onClick={() => chooseView('canvas')}>完整画布</button> : null}
       {!viewer ? <button className="icon-button" aria-label="缩小" onClick={() => engine.current?.zoom(0.8)}><Minus size={20}/></button> : null}
 
       {!viewer ? <span>{`${Math.round(camera.zoom * 100)}%`}</span> : null}
       {!viewer ? <button className="icon-button" aria-label="放大" onClick={() => engine.current?.zoom(1.25)}><Plus size={20}/></button> : null}
-      <span className="zoom-divider"/><button data-tv-row={viewer ? "view" : undefined} className={viewer ? "secondary view-button" : "icon-button"} aria-pressed={viewer ? !focus && viewMode === 'content' : undefined} aria-label="显示全部内容" title="显示全部内容 (F)" onClick={() => { setFocus(''); setViewMode('content'); engine.current?.fit(); }}>{viewer ? '显示全部内容' : <Scan size={21}/>}</button>
+      <span className="zoom-divider"/><button data-tv-row={viewer ? "view" : undefined} className={viewer ? "secondary view-button" : "icon-button"} aria-pressed={viewer ? !focus && viewMode === 'content' : undefined} aria-label="显示全部内容" title="显示全部内容 (F)" onFocus={viewer ? () => chooseView('content') : undefined} onClick={() => chooseView('content')}>{viewer ? '显示全部内容' : <Scan size={21}/>}</button>
     </div>
     {uploading ? <div className="tool-hint" role="status">正在压缩并上传图片…</div> : null}
     {imageError ? <div className="image-notice panel" role="alert"><span>{imageError}</span><button className="secondary" onClick={() => setImageError('')}>关闭</button></div> : null}

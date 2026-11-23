@@ -86,9 +86,11 @@ test('TV creates a room, phone joins and claims hosting, removed credentials sta
   await page.getByRole('button', { name: '创建电视白板' }).click();
   await expect(page.getByAltText('电视编辑加入二维码')).toBeVisible();
   await expect(page.getByRole('toolbar')).toHaveCount(0);
+  await page.getByRole('button', { name: '管理成员', exact: true }).click();
   await page.getByRole('button', { name: '邀请加入', exact: true }).click();
   const invitation = await page.locator('#invite-link').inputValue();
   await page.getByRole('button', { name: '关闭邀请' }).click();
+  await page.getByRole('button', { name: '关闭管理' }).click();
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const phone = await phoneContext.newPage(); phone.on('pageerror', e => errors.push(e.message));
   await phone.goto(invitation); await phone.getByPlaceholder('怎么称呼你？').fill('手机成员');
@@ -108,7 +110,7 @@ test('TV creates a room, phone joins and claims hosting, removed credentials sta
   await expect.poll(async () => JSON.parse((await page.getByTestId('canvas').getAttribute('data-camera'))!).zoom).toBe(1);
   await page.getByRole('button', { name: '完整画布', exact: true }).click();
   await expect(page.getByTestId('canvas')).toHaveAttribute('data-camera-moving', 'false');
-  await page.getByRole('button', { name: '管理', exact: true }).click();
+  await page.getByRole('button', { name: '管理成员', exact: true }).click();
   await page.getByRole('button', { name: '暂停加入', exact: true }).click();
   await expect(page.getByRole('button', { name: '恢复加入' })).toBeVisible();
   await page.getByRole('button', { name: '恢复加入' }).click();
@@ -141,14 +143,14 @@ test('TV remote navigation closes nested dialogs and restores room after app sto
   await expect(page).toHaveURL(/tvShell=android/);
   await expect(page.getByRole('button', { name: '导出本地副本' })).toHaveCount(0);
   // Exercise exactly the JavaScript entry point invoked by Android D-pad events.
-  await page.getByRole('button', { name: '管理', exact: true }).focus();
+  await page.getByRole('button', { name: '管理成员', exact: true }).focus();
   await page.evaluate(() => window.WhiteboardTV!.key('ArrowRight'));
-  await expect(page.getByRole('button', { name: '邀请加入', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: '设置', exact: true })).toBeFocused();
   await page.evaluate(() => window.WhiteboardTV!.key('Enter'));
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.evaluate(() => window.WhiteboardTV!.back());
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button', { name: '管理', exact: true }).focus(); await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: '管理成员', exact: true }).focus(); await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: '会话管理' })).toBeVisible();
   // Directional navigation remains within the active dialog.
   await page.keyboard.press('ArrowDown');
@@ -164,7 +166,7 @@ test('TV remote navigation closes nested dialogs and restores room after app sto
   await page.evaluate(() => sessionStorage.clear()); await page.close();
   const restored = await context.newPage(); await restored.goto(url);
   await expect(restored.getByAltText('电视编辑加入二维码')).toBeVisible();
-  await expect(restored.getByRole('button', { name: '管理', exact: true })).toBeVisible();
+  await expect(restored.getByRole('button', { name: '管理成员', exact: true })).toBeVisible();
   expect(await restored.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(errors).toEqual([]);
   await context.close();
@@ -341,7 +343,7 @@ test('phone uploads, moves and resizes images with both TV renderers; QR collaps
 });
 
 test('TV controls keep the QR anchor fixed and distinguish canvas from content with smooth motion', async ({ browser, page }) => {
-  test.setTimeout(60000);
+  test.setTimeout(120000);
   await create(page);
   await page.getByRole('button', { name: '添加便签', exact: true }).click(); await page.mouse.click(500, 300);
   await page.getByLabel('内容', { exact: true }).fill('一小块内容'); await page.getByRole('button', { name: '保存内容' }).click();
@@ -374,20 +376,21 @@ test('TV controls keep the QR anchor fixed and distinguish canvas from content w
     expect(qrBounds!.y + qrBounds!.height).toBeLessThan(anchor!.y);
     expect(anchor!.y + anchor!.height).toBeLessThan(footer!.y);
     const row = tv.locator('[data-tv-row="view"]');
-    await expect(row).toHaveText(['管理成员', '完整画布', '显示全部内容']);
-    await row.nth(0).focus(); await tv.keyboard.press('ArrowLeft'); await expect(row.nth(0)).toBeFocused();
+    await expect(row).toHaveText(['完整画布', '显示全部内容']);
+    await row.nth(0).focus(); await tv.keyboard.press('ArrowLeft'); await expect(tv.getByRole('button', { name: '隐藏界面' })).toBeFocused();
+    await tv.keyboard.press('ArrowRight'); await expect(row.nth(0)).toBeFocused();
     await tv.keyboard.press('ArrowRight'); await expect(row.nth(1)).toBeFocused();
     await tv.keyboard.press('ArrowUp'); await expect(toggle).toBeFocused();
     await tv.keyboard.press('ArrowLeft'); await expect(toggle).toBeFocused();
     await tv.keyboard.press('ArrowDown'); await expect(row.nth(1)).toBeFocused();
-    await tv.keyboard.press('ArrowRight'); await expect(row.nth(2)).toBeFocused();
-    await tv.keyboard.press('ArrowDown'); await expect(row.nth(2)).toBeFocused();
+    await tv.keyboard.press('ArrowRight'); await expect(row.nth(1)).toBeFocused();
+    await tv.keyboard.press('ArrowDown'); await expect(row.nth(1)).toBeFocused();
     const full = tv.getByRole('button', { name: '完整画布', exact: true });
     const content = tv.getByRole('button', { name: '显示全部内容', exact: true });
-    await full.click(); await expect(full).toHaveAttribute('aria-pressed', 'true');
+    await full.focus(); await expect(full).toHaveAttribute('aria-pressed', 'true');
     await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
     const wide = JSON.parse((await canvas.getAttribute('data-camera'))!);
-    await content.click(); await expect(content).toHaveAttribute('aria-pressed', 'true'); await expect(full).toHaveAttribute('aria-pressed', 'false');
+    await tv.keyboard.press('ArrowRight'); await expect(content).toBeFocused(); await expect(content).toHaveAttribute('aria-pressed', 'true'); await expect(full).toHaveAttribute('aria-pressed', 'false');
     await expect(canvas).toHaveAttribute('data-view-mode', 'content');
     await expect(canvas).toHaveAttribute('data-camera-moving', 'true');
     await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
@@ -398,6 +401,31 @@ test('TV controls keep the QR anchor fixed and distinguish canvas from content w
     expect(style.outline).toBe('none'); expect(style.transition).not.toBe('0s'); expect(style.background).not.toBe('rgb(255, 255, 255)'); expect(style.color).toBe('rgb(255, 255, 255)');
     await full.click(); await expect(canvas).toHaveAttribute('data-view-mode', 'canvas'); await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
     expect(JSON.parse((await canvas.getAttribute('data-camera'))!).zoom).toBeCloseTo(wide.zoom, 3);
+    // The QR button immediately uses the same solid blue focus state.
+    await toggle.focus(); await expect(toggle).toHaveCSS('background-color', 'rgb(49, 94, 251)'); await expect(toggle).toHaveCSS('color', 'rgb(255, 255, 255)');
+    await tv.keyboard.press('ArrowUp'); await expect(tv.getByRole('button', { name: '设置', exact: true })).toBeFocused();
+    await tv.keyboard.press('ArrowLeft'); await expect(tv.getByRole('button', { name: '管理成员', exact: true })).toBeFocused();
+    const sync = await (legacy ? tv.locator('#saved') : tv.locator('.tv-sync')).boundingBox();
+    const connection = await (legacy ? tv.locator('#status') : tv.locator('.connection')).boundingBox();
+    expect(sync!.x + sync!.width).toBeLessThan(connection!.x);
+    await tv.getByRole('button', { name: '设置', exact: true }).click();
+    await expect(tv.getByRole('dialog', { name: '电视白板', exact: true })).toBeVisible();
+    await tv.keyboard.press('Escape'); await expect(tv.getByRole('dialog')).toHaveCount(0);
+    await tv.keyboard.press('Escape'); await expect(tv.getByRole('dialog', { name: '退出白板？' })).toBeVisible();
+    await tv.getByRole('button', { name: '继续展示', exact: true }).click();
+    await content.focus(); await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
+    const shownZoom = JSON.parse((await canvas.getAttribute('data-camera'))!).zoom;
+    await tv.getByRole('button', { name: '隐藏界面' }).click();
+    await expect(tv.getByRole('button', { name: '显示界面' })).toBeFocused();
+    await expect(tv.getByRole('button')).toHaveCount(1);
+    await expect(tv.getByAltText('电视编辑加入二维码')).not.toBeVisible();
+    await expect(tv.getByRole('heading', { name: '共创白板', exact: true })).not.toBeVisible();
+    await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
+    expect(JSON.parse((await canvas.getAttribute('data-camera'))!).zoom).toBeGreaterThan(shownZoom);
+    await tv.keyboard.press('ArrowRight'); await expect(tv.getByRole('button', { name: '显示界面' })).toBeFocused();
+    await tv.keyboard.press('Enter'); await expect(tv.getByRole('button', { name: '隐藏界面' })).toBeFocused();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true'); expect(await toggle.boundingBox()).toEqual(anchor);
+    await expect(content).toHaveAttribute('aria-pressed', 'true');
     await context.close(); expect(errors).toEqual([]);
   }
 });

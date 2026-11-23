@@ -232,7 +232,7 @@ export class BoardEngine {
     if (this.viewer) {
       const bounds = contentBounds([...strokes, ...previews.map(p => p.stroke)], allObjects);
       const b = this.viewMode === 'canvas' ? canvasBounds(bounds) : bounds ?? DEFAULT_CANVAS;
-      const target = this.viewMode === 'content' ? fitTVContent(b, this.stage.width(), this.stage.height(), this.joinVisible) : fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], this.viewSize());
+      const target = (this.viewMode === 'content' || document.documentElement.classList.contains('tv-ui-hidden')) ? fitTVContent(b, this.stage.width(), this.stage.height(), this.joinVisible) : fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], this.viewSize());
       const member = this.session.members.get(this.focusedMember);
       if (member?.cursor) this.focusedPoint = member.cursor;
       if (!member) this.focusedPoint = null;
@@ -314,6 +314,7 @@ export class BoardEngine {
     this.element.style.backgroundPosition = `${this.camera.x}px ${this.camera.y}px`;
     this.onCamera({ ...this.camera }); this.layer.batchDraw();
   };
+  refreshTVLayout() { this.schedule(); }
   setJoinVisible(visible: boolean) { this.joinVisible = visible; this.schedule(); }
   private imageScale(image: ImageObject | ShapeObject, factor: number) { const value = Math.max(16 / Math.min(image.width, image.height), Math.min(4000 / Math.max(image.width, image.height), factor)); return { width: image.width * value, height: image.height * value }; }
   scaleSelected(factor: number) { const image = this.session.getObjects().find(o => o.id === this.selected); if (image && isResizable(image)) this.session.updateObject(image.id, this.imageScale(image, factor)); }

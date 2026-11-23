@@ -1,6 +1,6 @@
 import { fitBounds, type Camera } from '@whiteboard/board-core';
 
-// Keep the remembered column when travelling between the two bottom-right rows.
+/** Rows follow the screen: header → QR → view. Left of the views reaches the UI toggle. */
 export function rowNavigation() {
   let column = 0;
   return (key: string, active: HTMLElement, items: HTMLElement[]): boolean => {
@@ -8,13 +8,23 @@ export function rowNavigation() {
     if (!row || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) return false;
     const same = items.filter(el => el.dataset.tvRow === row);
     if (row === 'view') column = same.indexOf(active);
-    if (key === 'ArrowLeft' || key === 'ArrowRight') {
-      const index = Math.max(0, Math.min(same.length - 1, same.indexOf(active) + (key === 'ArrowRight' ? 1 : -1)));
-      same[index]?.focus(); if (row === 'view') column = index;
-    } else {
-      const target = key === 'ArrowUp' && row === 'view' ? 'join' : key === 'ArrowDown' && row === 'join' ? 'view' : '';
+    const move = (target: string, index = 0) => {
       const next = items.filter(el => el.dataset.tvRow === target);
-      if (next.length) next[Math.min(column, next.length - 1)].focus();
+      next[Math.min(index, next.length - 1)]?.focus();
+    };
+    if (row === 'visibility') {
+      if (key === 'ArrowRight') move('view', column);
+      if (key === 'ArrowUp') move('header');
+    } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      const index = same.indexOf(active) + (key === 'ArrowRight' ? 1 : -1);
+      if (row === 'view' && index < 0) move('visibility');
+      else same[Math.max(0, Math.min(same.length - 1, index))]?.focus();
+    } else if (key === 'ArrowUp') {
+      if (row === 'view') move(items.some(el => el.dataset.tvRow === 'join') ? 'join' : 'header');
+      if (row === 'join') move('header', 1);
+    } else {
+      if (row === 'header') move(items.some(el => el.dataset.tvRow === 'join') ? 'join' : 'view', column);
+      if (row === 'join') move('view', column);
     }
     return true;
   };
@@ -22,6 +32,7 @@ export function rowNavigation() {
 
 // Fit to the actual unobstructed rectangle, with no arbitrary padding or zoom cap.
 export function fitTVContent(bounds: Parameters<typeof fitBounds>[0], width: number, height: number, joinVisible: boolean): Camera {
+  if (document.documentElement.classList.contains('tv-ui-hidden')) return fitBounds(bounds, { width, height });
   const rect = (selector: string) => document.querySelector(selector)?.getBoundingClientRect();
   const header = rect('.brand'), status = rect('.collaboration, .connection');
   const toggle = rect('.qr-toggle, #toggle-qr'), footer = rect('.zoom-controls, #view-controls');

@@ -44,6 +44,7 @@ public final class MainActivity extends Activity {
     private String origin;
     private int requestVersion;
     private AlertDialog menu;
+    private AlertDialog exitConfirmation;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -135,9 +136,12 @@ public final class MainActivity extends Activity {
         web = new WebView(this); root.addView(web,0,new FrameLayout.LayoutParams(-1,-1));
         WebSettings settings = web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        settings.setUserAgentString(settings.getUserAgentString() + " WhiteboardTV/0.2.2");
         settings.setSupportMultipleWindows(false); settings.setJavaScriptCanOpenWindowsAutomatically(false); settings.setMediaPlaybackRequiresUserGesture(true);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (request.isForMainFrame() && ServerAddress.sameOrigin(origin, request.getUrl().toString())
+                    && "/__whiteboard_tv__/menu".equals(request.getUrl().getPath())) { showMenu(); return true; }
                 boolean blocked = !ServerAddress.sameOrigin(origin,request.getUrl().toString());
                 if (blocked && request.isForMainFrame()) Toast.makeText(MainActivity.this,"请在手机上打开外部链接",Toast.LENGTH_SHORT).show();
                 return blocked;
@@ -185,7 +189,7 @@ public final class MainActivity extends Activity {
         if (menu != null && menu.isShowing()) return;
         if (origin.isEmpty()) {
             menu = new AlertDialog.Builder(this).setTitle("共创白板")
-                .setItems(new String[]{"继续设置", "退出应用"}, (dialog, which) -> { if (which == 1) finish(); }).create();
+                .setItems(new String[]{"继续设置", "退出应用"}, (dialog, which) -> { if (which == 1) confirmExit(); }).create();
             menu.show(); return;
         }
         menu = new AlertDialog.Builder(this).setTitle("电视白板")
@@ -194,9 +198,19 @@ public final class MainActivity extends Activity {
                 if (which == 2) new AlertDialog.Builder(this).setTitle("新建白板？").setMessage("当前白板仍保留在服务中，手机成员可以继续使用。电视将进入新白板创建页。")
                     .setNegativeButton("取消",null).setPositiveButton("新建",(d,w) -> { preferences.edit().remove("roomUrl").apply(); openBoard(ServerAddress.startUrl(origin)); }).show();
                 if (which == 3) showSettings();
-                if (which == 4) finish();
+                if (which == 4) confirmExit();
             }).create();
         menu.show();
+    }
+    private void confirmExit() {
+        if (exitConfirmation != null && exitConfirmation.isShowing()) return;
+        exitConfirmation = new AlertDialog.Builder(this).setTitle("退出白板？")
+            .setMessage("已同步的内容会保留，下次打开将回到当前白板。")
+            .setNegativeButton("继续展示", (dialog, which) -> { if (web != null) web.requestFocus(); })
+            .setPositiveButton("退出应用", (dialog, which) -> finish()).create();
+        exitConfirmation.setOnDismissListener(dialog -> immersive());
+        exitConfirmation.show();
+        exitConfirmation.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus();
     }
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
         if (event.getKeyCode() == KeyEvent.KEYCODE_MENU) { if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) showMenu(); return true; }
@@ -207,8 +221,8 @@ public final class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
     @Override public void onBackPressed() {
-        if (web != null && overlay == null) web.evaluateJavascript("!!(window.WhiteboardTV && window.WhiteboardTV.back())", handled -> { if (!"true".equals(handled) && !isFinishing()) showMenu(); });
-        else showMenu();
+        if (web != null && overlay == null) web.evaluateJavascript("!!(window.WhiteboardTV && window.WhiteboardTV.back())", handled -> { if (!"true".equals(handled) && !isFinishing()) confirmExit(); });
+        else confirmExit();
     }
     @Override protected void onPause() { if (web != null) { remember(web.getUrl()); web.onPause(); } super.onPause(); }
     @Override protected void onResume() { super.onResume(); if (web != null && overlay == null) web.onResume(); immersive(); }

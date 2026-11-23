@@ -1,3 +1,4 @@
+import { browserTVBack, closeTVDialog } from './tv-menu';
 import { rowNavigation } from './tv-layout';
 import type { Credentials } from '@whiteboard/board-core';
 
@@ -22,7 +23,7 @@ const selector = 'button:not(:disabled), a[href], input:not(:disabled), select:n
 function controls(): HTMLElement[] {
   const dialogs = [...document.querySelectorAll<HTMLDialogElement>('dialog[open]')];
   const scope = dialogs.at(-1) ?? document;
-  return [...scope.querySelectorAll<HTMLElement>(selector)].filter(el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden');
+  return [...scope.querySelectorAll<HTMLElement>(selector)].filter(el => (!document.documentElement.classList.contains('tv-ui-hidden') || !!el.closest('dialog') || el.classList.contains('tv-visibility-toggle')) && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden');
 }
 function focus(el?: HTMLElement) { el?.focus({ preventScroll: true }); el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
 export function installTVNavigation() {
@@ -55,12 +56,13 @@ export function installTVNavigation() {
     focus(candidates[0]?.el); return true;
   };
   const back = () => {
+    if (closeTVDialog()) return true;
     const dialog = [...document.querySelectorAll<HTMLDialogElement>('dialog[open]')].at(-1);
     if (!dialog) return false;
     dialog.dispatchEvent(new Event('cancel', { cancelable: true })); return true;
   };
   const onKey = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') { if (back()) event.preventDefault(); }
+    if (event.key === 'Escape') { if (back() || browserTVBack()) event.preventDefault(); }
     else if (key(event.key)) event.preventDefault();
   };
   const restoreFocus = () => {

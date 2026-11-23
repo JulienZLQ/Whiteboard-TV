@@ -1,0 +1,28 @@
+/* Presentation chrome shares focus, motion and hidden-state behavior on both TV renderers. */
+.tv-visibility-toggle{position:absolute;left:24px;bottom:24px;min-height:46px;padding:12px 20px;border:0;font-size:16px;z-index:3}
+.tv-sync{white-space:nowrap;font-size:14px;color:#667085}.tv-sync:before{content:'✓';color:#2abc79;margin-right:8px}
+.tv-mode>.brand,.tv-mode>.collaboration,.tv-mode>.tv-join,.tv-mode>.zoom-controls,.tv-mode>.empty-state,
+.legacy-tv>.brand,.legacy-tv>.connection,.legacy-tv>#join,.legacy-tv>#empty,.legacy-tv #view-controls{transition:opacity .22s ease,visibility 0s}
+.tv-ui-hidden .tv-mode>:not(.canvas):not(.tv-visibility-toggle),
+.tv-ui-hidden .legacy-tv>.brand,.tv-ui-hidden .legacy-tv>.connection,.tv-ui-hidden .legacy-tv>#join,
+.tv-ui-hidden .legacy-tv>#empty,.tv-ui-hidden .legacy-tv #view-controls{opacity:0;visibility:hidden;pointer-events:none;transition:opacity .22s ease,visibility 0s .22s}
+.tv-mode button:focus,.tv-navigation button:focus,.tv-mode button[aria-pressed=true]:focus,
+.legacy-tv button:focus,.legacy-tv #toggle-qr:focus,.legacy-tv #claim:focus,.legacy-tv #members-close:focus,
+.tv-mode .tv-join .qr-toggle:focus,.tv-mode .tv-join .qr-toggle:hover,
+.legacy-tv #toggle-qr:hover{outline:none;background:#315efb;color:white;box-shadow:0 5px 18px #315efb30}
+.tv-menu{border:0;border-radius:20px;padding:28px;width:440px;max-width:90vw;max-height:85vh;overflow:auto;color:#172033;background:#fff;box-shadow:0 16px 60px #17203330;font:inherit}
+.tv-menu::backdrop{background:#17203366}.tv-menu h2{margin:0 0 18px;font-size:26px}.tv-menu p{color:#667085;line-height:1.6}
+.tv-menu button{display:block;width:100%;padding:14px 18px;margin-top:10px;border:0;border-radius:12px;font:inherit;font-size:18px;text-align:left;background:#f2f4f8;color:#172033;transition:background-color .2s ease,color .2s ease}
+.tv-menu button:focus{outline:none;background:#315efb;color:white}
+.legacy-tv .connection{display:flex;align-items:center;padding:6px 8px;gap:12px;font-size:16px;white-space:nowrap}
+.legacy-tv .connection button{font-size:16px;padding:12px 14px}
+.legacy-tv #saved{position:static;padding:0 4px;font-size:16px;color:#667085;box-shadow:none;background:none}
+.legacy-tv .connection i{margin-right:7px}.legacy-tv #saved:before{margin-right:7px}
+.tv-mode .collaboration{gap:10px}.tv-mode .collaboration .secondary{border:0;white-space:nowrap}
+@media(max-width:1100px){.tv-mode .avatars{display:none}.tv-mode .collaboration{gap:8px}.tv-mode .collaboration .secondary{padding:10px}.tv-mode .connection{font-size:13px}.tv-mode .brand{padding:12px 16px}.tv-mode .brand h1{font-size:20px}}
+@media(prefers-reduced-motion:reduce){.tv-mode>*,.legacy-tv>*,.legacy-tv #view-controls,.tv-menu button{transition:none}}
+
+/* QR panels explicitly declare visibility, so they also need the presentation override. */
+.tv-ui-hidden .tv-mode .tv-qr-content,.tv-ui-hidden .legacy-tv #qr-content{opacity:0;visibility:hidden;transition:opacity .22s ease,visibility 0s .22s}
+.tv-mode .zoom-controls button[aria-pressed=true]:focus{background:#315efb;color:white}
+@media(prefers-reduced-motion:reduce){.tv-ui-hidden .tv-mode>*,.tv-ui-hidden .legacy-tv>*,.tv-ui-hidden .legacy-tv #view-controls,.tv-ui-hidden .tv-mode .tv-qr-content,.tv-ui-hidden .legacy-tv #qr-content{transition:none}}
