@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { canvasBounds, DEFAULT_CANVAS, contentBounds, fitCamera, objectLayout, type AccessState, type BoardObject, type BoardSnapshot, type Credentials, type Member, type Camera, type Point, type ServerMessage, type Stroke } from '@whiteboard/board-core';
+import { resolveObject, canvasBounds, DEFAULT_CANVAS, contentBounds, fitCamera, objectLayout, type AccessState, type BoardObject, type BoardSnapshot, type Credentials, type Member, type Camera, type Point, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 import './legacy-tv.css';
 import { ImageCache } from './images';
 
@@ -125,6 +125,19 @@ function stroke(s: Stroke) {
 }
 function object(o: BoardObject) {
   const layout = objectLayout(o);
+  if (o.kind === 'shape') {
+    ctx.strokeStyle = o.color; ctx.lineWidth = 3; ctx.fillStyle = o.color + '12'; ctx.beginPath();
+    if (o.shape === 'ellipse') ctx.ellipse(o.x + o.width / 2, o.y + o.height / 2, o.width / 2, o.height / 2, 0, 0, Math.PI * 2);
+    else ctx.rect(o.x, o.y, o.width, o.height);
+    ctx.fill(); ctx.stroke(); return;
+  }
+  if (o.kind === 'connector') {
+    ctx.strokeStyle = o.color; ctx.fillStyle = o.color; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(o.x + o.dx, o.y + o.dy); ctx.stroke();
+    if (o.arrow) { const angle = Math.atan2(o.dy, o.dx), x = o.x + o.dx, y = o.y + o.dy;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 14 * Math.cos(angle) + 6 * Math.sin(angle), y - 14 * Math.sin(angle) - 6 * Math.cos(angle)); ctx.lineTo(x - 14 * Math.cos(angle) - 6 * Math.sin(angle), y - 14 * Math.sin(angle) + 6 * Math.cos(angle)); ctx.closePath(); ctx.fill(); }
+    return;
+  }
   if (o.kind === 'image') {
     const image = images.get(o.assetId); ctx.fillStyle = '#e9edf5'; ctx.fillRect(o.x, o.y, o.width, o.height);
     if (image) ctx.drawImage(image, o.x, o.y, o.width, o.height);
@@ -140,9 +153,11 @@ function paint() {
   const width = innerWidth, height = innerHeight, ratio = Math.min(devicePixelRatio || 1, 2);
   if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) { canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); canvas.style.width = width + 'px'; canvas.style.height = height + 'px'; }
   const active = Array.from(previews.values()).map(p => p.stroke).filter(s => !(snapshot.deletedStrokeIds || []).includes(s.id)), activeObjects = Array.from(objectPreviews.values()).map(p => p.object).filter(o => !(snapshot.deletedObjectIds || []).includes(o.id));
-  const bounds = contentBounds(snapshot.strokes.concat(active), snapshot.objects.concat(activeObjects));
+  const merged = new Map(snapshot.objects.map(o => [o.id, o])); activeObjects.forEach(o => merged.set(o.id, o));
+  const visible = Array.from(merged.values());
+  const bounds = contentBounds(snapshot.strokes.concat(active), visible);
   const b = viewMode === 'canvas' ? canvasBounds(bounds) : bounds ?? DEFAULT_CANVAS;
-  const target = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], { width: Math.max(100, width - (qrHidden ? 0 : 290)), height: Math.max(100, height - 180) }, 32);
+  const target = fitCamera([{ id: 'overview', points: [b.left, b.top, b.right, b.bottom], width: 1, color: '#000000', kind: 'pen' }], { width: Math.max(100, width - (qrHidden ? 0 : 290)), height: Math.max(100, height - 240) }, 32);
   target.y += 110;
   const focused = members.find(m => m.id === focusedMember);
   if (focused?.cursor) focusedPoint = focused.cursor;
@@ -159,9 +174,9 @@ function paint() {
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0); ctx.clearRect(0, 0, width, height);
   ctx.save(); ctx.translate(viewCamera.x, viewCamera.y); ctx.scale(viewCamera.zoom, viewCamera.zoom);
   const previewIds = new Set(activeObjects.map(o => o.id));
-  snapshot.objects.filter(o => !previewIds.has(o.id)).forEach(object);
+  snapshot.objects.filter(o => !previewIds.has(o.id)).forEach(o => object(resolveObject(o, visible)));
   const savedIds = new Set(snapshot.strokes.map(s => s.id));
-  snapshot.strokes.forEach(stroke); active.filter(s => !savedIds.has(s.id)).forEach(stroke); activeObjects.forEach(object);
+  snapshot.strokes.forEach(stroke); active.filter(s => !savedIds.has(s.id)).forEach(stroke); activeObjects.forEach(o => object(resolveObject(o, visible)));
   ctx.restore();
   members.forEach(member => {
     if (!member.cursor) return;
@@ -170,6 +185,7 @@ function paint() {
     ctx.font = '18px sans-serif'; const w = ctx.measureText(member.name).width + 18; ctx.fillRect(x + 18, y + 26, w, 32); ctx.fillStyle = '#fff'; ctx.textBaseline = 'top'; ctx.fillText(member.name, x + 27, y + 32);
   });
   get('empty').hidden = !credentials || snapshot.strokes.length + snapshot.objects.length + active.length + activeObjects.length > 0;
+  canvas.dataset.connectors = JSON.stringify(visible.filter(o => o.kind === 'connector').map(o => resolveObject(o, visible)));
   canvas.dataset.viewMode = focusedMember ? 'member' : viewMode; canvas.dataset.viewWidth = String(width - (qrHidden ? 0 : 290)); canvas.dataset.camera = JSON.stringify(viewCamera); canvas.dataset.joinVisible = String(!qrHidden); canvas.dataset.focusedMember = focusedMember; canvas.dataset.loadedImageCount = String(images.loaded);
   canvas.dataset.strokeCount = String(snapshot.strokes.length); canvas.dataset.objectCount = String(snapshot.objects.length);
   canvas.dataset.previewCount = String(active.length); canvas.dataset.objectPreviewCount = String(activeObjects.length);

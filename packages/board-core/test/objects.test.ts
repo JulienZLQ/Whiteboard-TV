@@ -39,3 +39,31 @@ test('default canvas retains blank space and grows by whole tiles around outlyin
   assert.ok(frame.left <= outside!.left && frame.bottom >= outside!.bottom);
   assert.ok(frame.right >= DEFAULT_CANVAS.right && frame.top <= DEFAULT_CANVAS.top);
 });
+
+test('shapes and connectors validate dimensions, endpoint geometry and kind-specific patches', async () => {
+  const { patchObject } = await import('../src/index');
+  const shape = { id: 'shape-0001', kind: 'shape' as const, shape: 'rectangle' as const, x: 0, y: 0, width: 200, height: 100, color: '#315EFB' };
+  const link = { id: 'connector-01', kind: 'connector' as const, x: 100, y: 50, dx: -200, dy: 0, fromId: null, toId: null, arrow: true, color: '#315EFB' };
+  assert.ok(validObject(shape)); assert.ok(validObject(link));
+  assert.equal(validObject({ ...shape, width: 0 }), false);
+  assert.equal(validObject({ ...link, dx: Infinity }), false);
+  assert.equal(validObject({ ...link, fromId: shape.id, toId: shape.id }), false);
+  assert.equal(validObject({ ...link, x: 100000, dx: 20 }), false);
+  assert.equal(patchObject(shape, { text: 'wrong kind' }), null);
+  assert.equal(patchObject(link, { x: 20, y: 30 }), null);
+  assert.equal(validObjectPatch({ x: 0, y: 0, dx: 20, dy: 40, fromId: null, toId: null }), true);
+});
+
+test('connections follow rectangle and ellipse boundaries, negative directions and preview targets', async () => {
+  const { resolveObject, hitObject } = await import('../src/index');
+  const a = { id: 'shape-0001', kind: 'shape' as const, shape: 'rectangle' as const, x: 0, y: 0, width: 200, height: 100, color: '#315EFB' };
+  const b = { ...a, id: 'shape-0002', shape: 'ellipse' as const, x: 400 };
+  const link = { id: 'connector-01', kind: 'connector' as const, x: 100, y: 50, dx: 400, dy: 0, fromId: a.id, toId: b.id, arrow: true, color: '#315EFB' };
+  assert.deepEqual(resolveObject(link, [a, b]), { ...link, x: 200, y: 50, dx: 200, dy: 0 });
+  assert.deepEqual(resolveObject(link, [a, { ...b, x: 600 }]), { ...link, x: 200, y: 50, dx: 400, dy: 0 });
+  assert.equal(hitObject({ ...link, fromId: null, toId: null, x: 400, dx: -200 }, { x: 300, y: 54 }), true);
+  assert.equal(hitObject({ ...link, dx: 200, dy: 200 }, { x: 100, y: 200 }), false);
+  assert.equal(hitObject(b, { x: 400, y: 0 }, 0), false);
+  const bounds = contentBounds([], [a, b, link])!;
+  assert.ok(bounds.left <= 0 && bounds.right >= 600);
+});

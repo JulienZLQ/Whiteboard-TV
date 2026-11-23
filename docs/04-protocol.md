@@ -79,3 +79,7 @@ hello.legacyTV=true 强制 viewer。ready.snapshot 和 snapshot 消息包含 str
 ## M3 图片扩展（已实现）
 
 图片作为 `kind: image` 对象加入现有 create/update/delete-object 通道，尺寸补丁与位置补丁分字段持久化。文件通过带房间凭证的 HTTP 接口存储读取，不进入 Yjs 增量或电视 JSON 快照。对象模型、限额、上传校验、导出 v3 与旧客户端更新要求见 [图片扩展](13-images-tv-view.md)。
+
+## M3 形状与连接扩展
+
+新增 shape、connector 对象，沿用 create-object / update-object / delete-object 和临时 object-preview。端点及绑定为一个几何字段组；目标删除时同一事务解除连接，保留解析后端点。仅允许同房间非连接对象作为目标，非法或失效引用归为空端点。包含新对象的 JSON 副本为 v4；图片仍携带 PNG 内容。详细字段、并发与升级约定见 [形状与连线](15-shapes-connectors.md)。

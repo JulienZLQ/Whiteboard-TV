@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
-import { OBJECT_LIMITS, type TextObject } from '@whiteboard/board-core';
+import { OBJECT_LIMITS, isTextObject, type TextObject } from '@whiteboard/board-core';
 import { BoardSession } from '../session';
 
 export function ObjectEditor({ session, object, onClose, onSaved }: { session: BoardSession; object: TextObject; onClose: () => void; onSaved: (id: string) => void }) {
@@ -19,7 +19,7 @@ export function ObjectEditor({ session, object, onClose, onSaved }: { session: B
     if (blocked) { session.previewObject(null); return; }
     const preview = () => {
       const latest = session.getObjects().find(o => o.id === object.id) ?? object;
-      if (latest.kind !== 'image') session.previewObject({ ...latest, text });
+      if (isTextObject(latest)) session.previewObject({ ...latest, text });
     };
     const timeout = setTimeout(preview, 100), heartbeat = setInterval(preview, 2000);
     return () => { clearTimeout(timeout); clearInterval(heartbeat); };

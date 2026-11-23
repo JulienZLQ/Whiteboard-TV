@@ -1,9 +1,9 @@
 import Konva from 'konva';
-import { fitCamera, canvasBounds, DEFAULT_CANVAS, contentBounds, contentFrame, objectLayout, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke, type BoardObject, type TextObject, type ImageObject } from '@whiteboard/board-core';
+import { fitCamera, hitObject, objectBounds, resolveObject, isTextObject, isResizable, validObject, canvasBounds, DEFAULT_CANVAS, contentBounds, contentFrame, objectLayout, zoomAt, screenToWorld, COLORS, LIMITS, type Camera, type Point, type Stroke, type BoardObject, type TextObject, type ImageObject, type ShapeObject, type ConnectorObject } from '@whiteboard/board-core';
 import { ImageCache } from '../images';
 import { BoardSession, newId } from '../session';
 
-export type Tool = 'hand' | 'pen' | 'marker' | 'eraser' | 'select' | 'text' | 'note';
+export type Tool = 'hand' | 'pen' | 'marker' | 'eraser' | 'select' | 'text' | 'note' | 'rectangle' | 'ellipse' | 'arrow' | 'line';
 export class BoardEngine {
   private stage: Konva.Stage;
   private layer: Konva.Layer;
@@ -14,8 +14,11 @@ export class BoardEngine {
   private selected = '';
   private images: ImageCache;
   private joinVisible = true;
-  private resizing: { origin: ImageObject; current: ImageObject; start: Point } | null = null;
-  private placing: BoardObject | null = null;
+  private resizing: { origin: ImageObject | ShapeObject; current: ImageObject | ShapeObject; start: Point } | null = null;
+  private placing: TextObject | null = null;
+  private creating: { start: Point; current: ShapeObject | ConnectorObject } | null = null;
+  private endpoint: { current: ConnectorObject; end: 'start' | 'end' } | null = null;
+  private renderObjects: BoardObject[] = [];
   private dragging: { origin: BoardObject; start: Point; current: BoardObject } | null = null;
   private overlay = new Konva.Group();
   private strokes = new Map<string, Konva.Line>();
@@ -38,7 +41,7 @@ export class BoardEngine {
   private lastFrame = 0;
   tool: Tool = 'pen';
   color: string = COLORS[0];
-  constructor(private element: HTMLDivElement, private session: BoardSession, private viewer: boolean, private onCamera: (camera: Camera) => void, private onSelection: (id: string) => void, private onEdit: (object: TextObject) => void) {
+  constructor(private element: HTMLDivElement, private session: BoardSession, private viewer: boolean, private onCamera: (camera: Camera) => void, private onSelection: (id: string) => void, private onEdit: (object: TextObject) => void, private onTool: (tool: Tool) => void) {
     this.images = new ImageCache(() => session.credentials, () => { this.objectRefs.clear(); this.schedule(); });
     Konva.pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     this.stage = new Konva.Stage({ container: element, width: element.clientWidth, height: element.clientHeight });
@@ -59,14 +62,14 @@ export class BoardEngine {
     element.addEventListener('wheel', this.wheel, { signal, passive: false });
     this.schedule();
   }
-  private viewSize() { return { width: this.stage.width() - (this.viewer && this.joinVisible && this.stage.width() >= 900 ? 270 : 0), height: this.stage.height() }; }
+  private viewSize() { return { width: this.stage.width() - (this.viewer && this.joinVisible && this.stage.width() >= 900 ? 270 : 0), height: this.stage.height() - (this.viewer ? 60 : 0) }; }
   private local(event: PointerEvent): Point { const r = this.element.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; }
   private down = (event: PointerEvent) => {
     if (event.button !== 0 || this.viewer || this.session.getSnapshot().connection === 'denied') return;
     event.preventDefault();
     this.element.setPointerCapture(event.pointerId);
     const point = this.local(event); this.pointers.set(event.pointerId, point);
-    if (this.pointers.size > 1) { this.drawing = null; this.placing = null; this.dragging = null; this.resizing = null; this.session.previewObject(null); this.session.preview(null); this.gesture = true; this.pinchDistance = 0; this.schedule(); return; }
+    if (this.pointers.size > 1) { this.drawing = null; this.placing = null; this.dragging = null; this.resizing = null; this.creating = null; this.endpoint = null; this.session.previewObject(null); this.session.preview(null); this.gesture = true; this.pinchDistance = 0; this.schedule(); return; }
     this.previous = point;
     this.moved = true;
     if (this.gesture) return;
@@ -75,13 +78,18 @@ export class BoardEngine {
     if (this.tool === 'eraser') this.eraseAt(world);
     if (this.tool === 'select') {
       const selected = this.session.getObjects().find(o => o.id === this.selected);
-      if (selected?.kind === 'image' && Math.abs(world.x - selected.x - selected.width) * this.camera.zoom <= 20 && Math.abs(world.y - selected.y - selected.height) * this.camera.zoom <= 20) {
+      const resolved = selected && resolveObject(selected, this.session.getObjects());
+      if (resolved?.kind === 'connector' && (Math.hypot(world.x - resolved.x, world.y - resolved.y) * this.camera.zoom <= 20 || Math.hypot(world.x - resolved.x - resolved.dx, world.y - resolved.y - resolved.dy) * this.camera.zoom <= 20)) {
+        this.endpoint = { current: resolved, end: Math.hypot(world.x - resolved.x, world.y - resolved.y) * this.camera.zoom <= 20 ? 'start' : 'end' };
+      } else if (selected && isResizable(selected) && Math.abs(world.x - selected.x - selected.width) * this.camera.zoom <= 20 && Math.abs(world.y - selected.y - selected.height) * this.camera.zoom <= 20) {
         this.resizing = { origin: selected, current: selected, start: world };
       } else {
         const object = this.hitObject(world); this.select(object?.id ?? '');
-        if (object) this.dragging = { origin: object, current: object, start: world };
+        if (object) { const resolved = resolveObject(object, this.session.getObjects()); this.dragging = { origin: resolved, current: resolved, start: world }; }
       }
     }
+    if (this.tool === 'rectangle' || this.tool === 'ellipse') this.creating = { start: world, current: { id: newId(), kind: 'shape', shape: this.tool, x: world.x, y: world.y, width: 200, height: 140, color: this.color } };
+    if (this.tool === 'arrow' || this.tool === 'line') this.creating = { start: world, current: { id: newId(), kind: 'connector', x: world.x, y: world.y, dx: 160, dy: 0, fromId: this.targetAt(world)?.id ?? null, toId: null, arrow: this.tool === 'arrow', color: this.color } };
     if (this.tool === 'text' || this.tool === 'note') this.placing = { id: newId(), kind: this.tool, x: world.x, y: world.y, text: '', color: this.color };
     this.session.presence(world); this.schedule();
   };
@@ -110,19 +118,35 @@ export class BoardEngine {
         this.drawing = { ...this.drawing, id: newId(), points: points.slice(-2) };
       }
       this.drawing.points.push(world.x, world.y); this.session.preview(this.drawing);
+    } else if (this.creating) {
+      const { start, current } = this.creating;
+      if (current.kind === 'shape') {
+        const width = Math.min(4000, Math.max(16, Math.abs(world.x - start.x))), height = Math.min(4000, Math.max(16, Math.abs(world.y - start.y)));
+        this.creating.current = { ...current, x: world.x < start.x ? start.x - width : start.x, y: world.y < start.y ? start.y - height : start.y, width, height };
+      } else {
+        const target = this.targetAt(world);
+        this.creating.current = { ...current, dx: world.x - start.x, dy: world.y - start.y, toId: target?.id !== current.fromId ? target?.id ?? null : null };
+      }
+      if (validObject(this.creating.current)) this.session.previewObject(this.creating.current);
+    } else if (this.endpoint) {
+      const { current, end } = this.endpoint, target = this.targetAt(world);
+      this.endpoint.current = end === 'start'
+        ? { ...current, x: world.x, y: world.y, dx: current.x + current.dx - world.x, dy: current.y + current.dy - world.y, fromId: target?.id !== current.toId ? target?.id ?? null : null }
+        : { ...current, dx: world.x - current.x, dy: world.y - current.y, toId: target?.id !== current.fromId ? target?.id ?? null : null };
+      if (validObject(this.endpoint.current)) this.session.previewObject(this.endpoint.current);
     } else if (this.resizing) {
       const { origin, start } = this.resizing;
       const factor = ((world.x - start.x) * origin.width + (world.y - start.y) * origin.height) / (origin.width ** 2 + origin.height ** 2) + 1;
-      const size = this.imageScale(origin, factor);
+      const size = origin.kind === 'image' ? this.imageScale(origin, factor) : { width: Math.max(16, Math.min(4000, origin.width + world.x - start.x)), height: Math.max(16, Math.min(4000, origin.height + world.y - start.y)) };
       const latest = this.session.getObjects().find(o => o.id === origin.id);
-      if (latest?.kind === 'image') { this.resizing.current = { ...latest, ...size }; this.session.previewObject(this.resizing.current); }
+      if (latest && isResizable(latest)) { this.resizing.current = { ...latest, ...size }; this.session.previewObject(this.resizing.current); }
     } else if (this.dragging) {
       const { origin, start } = this.dragging;
       if (Math.hypot(world.x - start.x, world.y - start.y) * this.camera.zoom >= 3) {
         const x = Math.max(-LIMITS.coordinate, Math.min(LIMITS.coordinate, origin.x + world.x - start.x));
         const y = Math.max(-LIMITS.coordinate, Math.min(LIMITS.coordinate, origin.y + world.y - start.y));
         const latest = this.session.getObjects().find(o => o.id === origin.id);
-        if (latest) { this.dragging.current = { ...latest, x, y }; this.session.previewObject(this.dragging.current); }
+        if (latest) { this.dragging.current = latest.kind === 'connector' && origin.kind === 'connector' ? { ...latest, x, y, dx: origin.dx, dy: origin.dy, fromId: null, toId: null } : { ...latest, x, y }; this.session.previewObject(this.dragging.current); }
       }
     } else if (this.tool === 'hand' && this.previous) {
       this.camera.x += point.x - this.previous.x; this.camera.y += point.y - this.previous.y; this.moved = true;
@@ -134,15 +158,18 @@ export class BoardEngine {
     if (this.drawing && !this.gesture) this.session.commit(this.drawing);
     if (!this.gesture && this.dragging) {
       const { origin, current } = this.dragging;
-      if (current.x !== origin.x || current.y !== origin.y) this.session.updateObject(origin.id, { x: current.x, y: current.y });
+      if (current.x !== origin.x || current.y !== origin.y) this.session.updateObject(origin.id, current.kind === 'connector' ? this.connectorPatch(current) : { x: current.x, y: current.y });
     }
     if (!this.gesture && this.resizing) {
       const { origin, current } = this.resizing;
       if (current.width !== origin.width || current.height !== origin.height) this.session.updateObject(origin.id, { width: current.width, height: current.height });
     }
+    if (!this.gesture && this.endpoint && validObject(this.endpoint.current)) this.session.updateObject(this.endpoint.current.id, this.connectorPatch(this.endpoint.current));
+    if (!this.gesture && this.creating && validObject(this.creating.current)) { const object = this.creating.current; this.session.createObject(object); this.select(object.id); this.onTool('select'); }
+    this.creating = null; this.endpoint = null;
     const placing = !this.gesture ? this.placing : null;
     this.placing = null; this.dragging = null; this.resizing = null; this.session.previewObject(null);
-    if (placing && placing.kind !== 'image') this.onEdit(placing);
+    if (placing) this.onEdit(placing);
     this.drawing = null; this.session.preview(null); this.pointers.delete(event.pointerId);
     if (!this.pointers.size) { this.gesture = false; this.previous = null; }
     this.pinchDistance = 0; this.pinchCenter = null;
@@ -151,7 +178,7 @@ export class BoardEngine {
   };
   private cancel = (event: PointerEvent) => {
     if (!this.pointers.has(event.pointerId)) return;
-    this.drawing = null; this.placing = null; this.dragging = null; this.resizing = null; this.session.previewObject(null); this.session.preview(null); this.pointers.delete(event.pointerId);
+    this.drawing = null; this.placing = null; this.dragging = null; this.resizing = null; this.creating = null; this.endpoint = null; this.session.previewObject(null); this.session.preview(null); this.pointers.delete(event.pointerId);
     if (!this.pointers.size) this.gesture = false;
     this.pinchDistance = 0; this.pinchCenter = null; this.session.presence(null); this.schedule();
   };
@@ -161,18 +188,33 @@ export class BoardEngine {
     this.camera = zoomAt(this.camera, { x: event.clientX - r.left, y: event.clientY - r.top }, Math.exp(-event.deltaY * 0.001));
     this.moved = true; this.schedule();
   };
+  private connectorPatch(o: ConnectorObject) { const { x, y, dx, dy, fromId, toId } = o; return { x, y, dx, dy, fromId, toId }; }
+  private targetAt(point: Point) { return this.session.getObjects().reverse().find(o => o.kind !== 'connector' && hitObject(o, point, 14 / this.camera.zoom)); }
   private hitObject(point: Point) {
-    return this.session.getObjects().reverse().find(o => { const size = objectLayout(o); return point.x >= o.x && point.x <= o.x + size.width && point.y >= o.y && point.y <= o.y + size.height; });
+    const objects = this.session.getObjects();
+    return [...objects].reverse().find(o => hitObject(resolveObject(o, objects), point, 8 / this.camera.zoom));
   }
   private doubleClick = (event: MouseEvent) => {
     if (this.viewer || this.tool !== 'select' || this.session.getSnapshot().connection === 'denied') return;
     const rect = this.element.getBoundingClientRect();
     const object = this.hitObject(screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top }, this.camera));
-    if (object && object.kind !== 'image') this.onEdit(object);
+    if (object && isTextObject(object)) this.onEdit(object);
   };
   select(id: string) { if (id !== this.selected) { this.selected = id; this.onSelection(id); this.schedule(); } }
   private objectNode(object: BoardObject, draft = false) {
+    object = resolveObject(object, this.renderObjects);
     const layout = objectLayout(object), node = new Konva.Group({ x: object.x, y: object.y, opacity: draft ? .82 : 1 });
+    if (object.kind === 'shape') {
+      const common = { stroke: object.color, strokeWidth: 3, fill: object.color + '12' };
+      if (object.shape === 'ellipse') node.add(new Konva.Ellipse({ ...common, x: object.width / 2, y: object.height / 2, radiusX: object.width / 2, radiusY: object.height / 2 }));
+      else node.add(new Konva.Rect({ ...common, width: object.width, height: object.height, cornerRadius: 12 }));
+      return node;
+    }
+    if (object.kind === 'connector') {
+      const attrs = { points: [0, 0, object.dx, object.dy], stroke: object.color, fill: object.color, strokeWidth: 3, lineCap: 'round' as const, lineJoin: 'round' as const };
+      node.add(object.arrow ? new Konva.Arrow({ ...attrs, pointerLength: 14, pointerWidth: 12 }) : new Konva.Line(attrs));
+      return node;
+    }
     if (object.kind === 'image') {
       const image = this.images.get(object.assetId);
       node.add(new Konva.Rect({ width: layout.width, height: layout.height, fill: '#e9edf5', stroke: '#d0d8e7', strokeWidth: 1 }));
@@ -208,7 +250,10 @@ export class BoardEngine {
     const strokes = this.session.getStrokes(), previews = this.session.getPreviews(), objects = this.session.getObjects();
     const objectPreviews = this.session.getObjectPreviews();
     if (this.selected && !objects.some(o => o.id === this.selected)) this.select('');
-    const allObjects = [...objects, ...objectPreviews.map(p => p.object)];
+    const visible = new Map(objects.map(o => [o.id, o]));
+    for (const p of objectPreviews) visible.set(p.object.id, p.object);
+    for (const o of [this.dragging?.current, this.resizing?.current, this.endpoint?.current, this.creating?.current]) if (o) visible.set(o.id, o);
+    const allObjects = [...visible.values()]; this.renderObjects = allObjects;
     if (this.viewer) {
       const bounds = contentBounds([...strokes, ...previews.map(p => p.stroke)], allObjects);
       const b = this.viewMode === 'canvas' ? canvasBounds(bounds) : bounds ?? DEFAULT_CANVAS;
@@ -241,8 +286,10 @@ export class BoardEngine {
     const previewIds = new Set(objectPreviews.map(p => p.object.id));
     if (this.dragging) previewIds.add(this.dragging.origin.id);
     if (this.resizing) previewIds.add(this.resizing.origin.id);
-    objects.forEach((object, index) => {
-      if (this.objectRefs.get(object.id) !== object) {
+    if (this.endpoint) previewIds.add(this.endpoint.current.id);
+    objects.forEach((original, index) => {
+      const object = resolveObject(original, allObjects);
+      if (object.kind === 'connector' ? JSON.stringify(this.objectRefs.get(object.id)) !== JSON.stringify(object) : this.objectRefs.get(object.id) !== object) {
         this.objectNodes.get(object.id)?.destroy();
         const node = this.objectNode(object); this.objectGroup.add(node); this.objectNodes.set(object.id, node); this.objectRefs.set(object.id, object);
       }
@@ -256,12 +303,17 @@ export class BoardEngine {
     for (const preview of objectPreviews) previewGroup.add(this.objectNode(preview.object, true));
     if (this.dragging && objectIds.has(this.dragging.origin.id)) previewGroup.add(this.objectNode(this.dragging.current));
     if (this.resizing && objectIds.has(this.resizing.origin.id)) previewGroup.add(this.objectNode(this.resizing.current));
-    const selected = this.resizing?.current ?? this.dragging?.current ?? objects.find(o => o.id === this.selected);
-    if (selected && objectIds.has(selected.id)) {
+    if (this.creating) previewGroup.add(this.objectNode(this.creating.current, true));
+    if (this.endpoint && objectIds.has(this.endpoint.current.id)) previewGroup.add(this.objectNode(this.endpoint.current));
+    const selectedRaw = this.endpoint?.current ?? this.resizing?.current ?? this.dragging?.current ?? objects.find(o => o.id === this.selected);
+    const selected = selectedRaw && resolveObject(selectedRaw, allObjects);
+    if (selected && objectIds.has(selected.id) && selected.kind !== 'connector') {
       const size = objectLayout(selected);
       previewGroup.add(new Konva.Rect({ x: selected.x, y: selected.y, width: size.width, height: size.height, stroke: '#315EFB', strokeWidth: 2 / this.camera.zoom, dash: [6 / this.camera.zoom, 4 / this.camera.zoom], cornerRadius: 6 }));
     }
-    if (selected?.kind === 'image' && objectIds.has(selected.id)) previewGroup.add(new Konva.Rect({ x: selected.x + selected.width - 8 / this.camera.zoom, y: selected.y + selected.height - 8 / this.camera.zoom, width: 16 / this.camera.zoom, height: 16 / this.camera.zoom, fill: '#315EFB', stroke: 'white', strokeWidth: 2 / this.camera.zoom, cornerRadius: 3 / this.camera.zoom }));
+    if (selected && isResizable(selected) && objectIds.has(selected.id)) previewGroup.add(new Konva.Rect({ x: selected.x + selected.width - 8 / this.camera.zoom, y: selected.y + selected.height - 8 / this.camera.zoom, width: 16 / this.camera.zoom, height: 16 / this.camera.zoom, fill: '#315EFB', stroke: 'white', strokeWidth: 2 / this.camera.zoom, cornerRadius: 3 / this.camera.zoom }));
+    if (selected?.kind === 'connector' && objectIds.has(selected.id)) for (const p of [{ x: selected.x, y: selected.y }, { x: selected.x + selected.dx, y: selected.y + selected.dy }]) previewGroup.add(new Konva.Circle({ ...p, radius: 8 / this.camera.zoom, fill: 'white', stroke: '#315EFB', strokeWidth: 2 / this.camera.zoom }));
+    this.element.dataset.connectors = JSON.stringify(allObjects.filter(o => o.kind === 'connector').map(o => resolveObject(o, allObjects)));
     for (const member of this.session.members.values()) {
       if (member.id === this.session.getSnapshot().memberId || !member.cursor) continue;
       const x = member.cursor.x * this.camera.zoom + this.camera.x, y = member.cursor.y * this.camera.zoom + this.camera.y;
@@ -287,8 +339,8 @@ export class BoardEngine {
     this.onCamera({ ...this.camera }); this.layer.batchDraw();
   };
   setJoinVisible(visible: boolean) { this.joinVisible = visible; this.schedule(); }
-  private imageScale(image: ImageObject, factor: number) { const value = Math.max(16 / Math.min(image.width, image.height), Math.min(4000 / Math.max(image.width, image.height), factor)); return { width: image.width * value, height: image.height * value }; }
-  scaleSelected(factor: number) { const image = this.session.getObjects().find(o => o.id === this.selected); if (image?.kind === 'image') this.session.updateObject(image.id, this.imageScale(image, factor)); }
+  private imageScale(image: ImageObject | ShapeObject, factor: number) { const value = Math.max(16 / Math.min(image.width, image.height), Math.min(4000 / Math.max(image.width, image.height), factor)); return { width: image.width * value, height: image.height * value }; }
+  scaleSelected(factor: number) { const image = this.session.getObjects().find(o => o.id === this.selected); if (image && isResizable(image)) this.session.updateObject(image.id, this.imageScale(image, factor)); }
   placeImage(asset: { assetId: string; width: number; height: number }) {
     const ratio = asset.width / asset.height;
     if (ratio > 250 || ratio < 1 / 250) throw new Error('图片过于狭长，请先裁剪');

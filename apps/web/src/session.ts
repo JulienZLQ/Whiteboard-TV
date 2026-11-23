@@ -1,6 +1,6 @@
 import { saveCredentials } from './tv';
 import * as Y from 'yjs';
-import { LIMITS, type BoardObject, type ObjectPatch, type ObjectMutation, type ObjectPreview, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
+import { patchObject, resolveObject, LIMITS, type BoardObject, type ObjectPatch, type ObjectMutation, type ObjectPreview, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 
 export function newId() { return Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2, '0')).join(''); }
 type Mutation = Extract<ClientMessage, { type: 'commit' | 'delete' }> | ObjectMutation;
@@ -131,8 +131,15 @@ export class BoardSession {
     for (const operation of this.pending.values()) {
       if (applied.has(operation.mutationId)) continue;
       if (operation.type === 'create-object' && !deleted.has(operation.object.id) && !objects.has(operation.object.id)) objects.set(operation.object.id, operation.object);
-      if (operation.type === 'update-object' && !deleted.has(operation.objectId) && objects.has(operation.objectId)) objects.set(operation.objectId, { ...objects.get(operation.objectId)!, ...operation.patch });
-      if (operation.type === 'delete-object') objects.delete(operation.objectId);
+      if (operation.type === 'update-object' && !deleted.has(operation.objectId) && objects.has(operation.objectId)) { const updated = patchObject(objects.get(operation.objectId)!, operation.patch); if (updated) objects.set(operation.objectId, updated); }
+      if (operation.type === 'delete-object') {
+        const all = [...objects.values()];
+        for (const o of all) if (o.kind === 'connector' && (o.fromId === operation.objectId || o.toId === operation.objectId)) {
+          const resolved = resolveObject(o, all);
+          if (resolved.kind === 'connector') objects.set(o.id, { ...resolved, fromId: o.fromId === operation.objectId ? null : o.fromId, toId: o.toId === operation.objectId ? null : o.toId });
+        }
+        objects.delete(operation.objectId);
+      }
     }
     return [...objects.values()];
   }

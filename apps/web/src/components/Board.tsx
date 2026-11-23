@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Check, Monitor, UserPlus, Minus, Plus, Scan, Download, RefreshCw, WifiOff } from 'lucide-react';
 import { androidTV } from '../tv';
-import { COLORS, type Camera, type TextObject } from '@whiteboard/board-core';
+import { COLORS, isTextObject, isResizable, type Camera, type TextObject } from '@whiteboard/board-core';
 import { BoardEngine, type Tool } from '../canvas/engine';
 import { BoardSession, roomLink } from '../session';
 import { imageBlob, imagePath, prepareImage } from '../images';
@@ -23,10 +23,11 @@ export function Board({ session }: { session: BoardSession }) {
   const [uploading, setUploading] = useState(false), [imageError, setImageError] = useState(''), [joinHidden, setJoinHidden] = useState(false);
   const [focus, setFocus] = useState('');
   const [viewMode, setViewMode] = useState<'canvas' | 'content'>('canvas');
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [manage, setManage] = useState(false);
   const [invite, setInvite] = useState(false), [empty, setEmpty] = useState(true);
   useEffect(() => {
-    const instance = new BoardEngine(container.current!, session, viewer, setCamera, setSelected, setEditing); engine.current = instance;
+    const instance = new BoardEngine(container.current!, session, viewer, setCamera, setSelected, setEditing, setTool); engine.current = instance;
     const check = () => setEmpty(session.getStrokes().length === 0 && session.getPreviews().length === 0 && session.getObjects().length === 0 && session.getObjectPreviews().length === 0);
     const unsubscribe = session.subscribeCanvas(check); check();
     return () => { unsubscribe(); instance.destroy(); engine.current = null; };
@@ -65,7 +66,7 @@ export function Board({ session }: { session: BoardSession }) {
     const assets: Record<string, string> = {};
     // Sequential reads keep the memory peak bounded on phones; never silently omit image bytes.
     for (const id of ids) { const blob = await imageBlob(session.credentials, id); assets[id] = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(blob); }); }
-    const blob = new Blob([JSON.stringify({ schemaVersion: ids.length ? 3 : 2, roomId: session.credentials.roomId, strokes, objects, ...(ids.length ? { assets } : {}) }, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ schemaVersion: objects.some(o => o.kind === 'shape' || o.kind === 'connector') ? 4 : ids.length ? 3 : 2, roomId: session.credentials.roomId, strokes, objects, ...(ids.length ? { assets } : {}) }, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = 'whiteboard-backup.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { setImageError('完整副本导出失败，请连接服务后重试（包含图片原件）'); }
   }
@@ -85,11 +86,13 @@ export function Board({ session }: { session: BoardSession }) {
       <button disabled={state.connection !== 'online' || !state.access || state.access.paused || state.access.ended} className="primary invite-button" onClick={() => setInvite(true)}><UserPlus size={19}/><span>{state.access?.paused ? '加入已暂停' : '邀请加入'}</span></button>
     </div>
     {viewer && state.access && state.connection === 'online' ? <TVJoinCard access={state.access} credentials={session.credentials} hidden={joinHidden} onToggle={() => setJoinHidden(!joinHidden)}/> : null}
-    {empty ? <div className="empty-state"><PencilMark/><h2>{viewer ? '等待第一个想法' : '从一笔开始'}</h2><p>{viewer ? '编辑端的每一笔，都会出现在这里' : '写下文字、贴一张便签，或自由书写'}</p><span>{viewer ? '画面自动适配全部内容' : '双指移动与缩放 · 每个人都有独立视角'}</span></div> : null}
-    {!viewer ? <Toolbar tool={tool} color={color} onTool={value => { setTool(value); if (value !== 'select') engine.current?.select(''); }} onColor={setColor} onImage={() => fileInput.current?.click()} uploading={uploading || state.connection !== 'online'}/> : null}
+    {empty ? <div className="empty-state"><PencilMark/><h2>{viewer ? '等待第一个想法' : '从一笔开始'}</h2><p>{viewer ? '编辑端的每一笔，都会出现在这里' : '写下文字、贴一张便签，或自由书写'}</p><span>{viewer ? '默认展示完整画布' : '双指移动与缩放 · 每个人都有独立视角'}</span></div> : null}
+    {!viewer ? <Toolbar onPaletteChange={setPaletteOpen} tool={tool} color={color} onTool={value => { setTool(value); if (value !== 'select') engine.current?.select(''); }} onColor={setColor} onImage={() => fileInput.current?.click()} uploading={uploading || state.connection !== 'online'}/> : null}
     <input ref={fileInput} type="file" className="sr-only" tabIndex={-1} aria-label="选择图片文件" accept="image/jpeg,image/png,image/webp" onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void addImage(file); }}/>
-    {!viewer && selected && !editing ? <div className="object-actions panel" aria-label="已选对象操作"><span>已选对象</span>{selectedObject?.kind === 'image' ? <><button className="secondary" aria-label="缩小图片" onClick={() => engine.current?.scaleSelected(.8)}>缩小</button><button className="secondary" aria-label="放大图片" onClick={() => engine.current?.scaleSelected(1.25)}>放大</button></> : <button className="secondary" onClick={() => { const object = session.getObjects().find(o => o.id === selected); if (object && object.kind !== 'image') setEditing(object); }}>编辑内容</button>}<button className="danger" onClick={() => { session.deleteObject(selected); engine.current?.select(''); }}>删除对象</button></div> : null}
-    {!viewer && (tool === 'text' || tool === 'note') && !editing ? <div className="tool-hint" role="status">点击画布放置{tool === 'note' ? '便签' : '文字'}</div> : null}
+    {!viewer && !paletteOpen && selected && !editing ? <div className="object-actions panel" aria-label="已选对象操作"><span>已选对象</span>{selectedObject && isResizable(selectedObject) ? <><button className="secondary" aria-label={selectedObject.kind === 'image' ? '缩小图片' : '缩小形状'} onClick={() => engine.current?.scaleSelected(.8)}>缩小</button><button className="secondary" aria-label={selectedObject.kind === 'image' ? '放大图片' : '放大形状'} onClick={() => engine.current?.scaleSelected(1.25)}>放大</button></> : selectedObject && isTextObject(selectedObject) ? <button className="secondary" onClick={() => { const object = session.getObjects().find(o => o.id === selected); if (object && isTextObject(object)) setEditing(object); }}>编辑内容</button> : null}<button className="danger" onClick={() => { session.deleteObject(selected); engine.current?.select(''); }}>删除对象</button></div> : null}
+    {!viewer && !paletteOpen && (tool === 'text' || tool === 'note') && !editing ? <div className="tool-hint" role="status">点击画布放置{tool === 'note' ? '便签' : '文字'}</div> : null}
+    {!viewer && !paletteOpen && ['rectangle', 'ellipse', 'arrow', 'line'].includes(tool) ? <div className="tool-hint" role="status">{tool === 'rectangle' || tool === 'ellipse' ? '拖动画布绘制形状' : '拖动连接两个对象，或在空白处绘制'}</div> : null}
+    {!viewer && !paletteOpen && selectedObject?.kind === 'connector' ? <div className="tool-hint" role="status">拖动端点重新连接 · 拖动线条自由移动</div> : null}
     {editing ? <ObjectEditor session={session} object={editing} onClose={() => setEditing(null)} onSaved={id => { setEditing(null); setTool('select'); engine.current?.select(id); }}/> : null}
     <footer className="save-status panel" aria-live="polite">{state.connection !== 'online' ? <WifiOff size={18}/> : <Check size={18}/>}<span>{state.pending ? `${state.pending} 项待保存` : state.connection === 'online' ? '已保存' : '等待连接'}</span>{!androidTV() ? <button className="icon-button export" aria-label="导出本地副本" title="导出本地副本" onClick={exportCopy}><Download size={17}/></button> : null}</footer>
     <div className="zoom-controls panel" aria-label="画布视角">

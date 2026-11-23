@@ -4,15 +4,30 @@ export type Size = { width: number; height: number };
 export type Stroke = { id: string; points: number[]; color: string; width: number; kind: 'pen' | 'marker' };
 export type TextObject = { id: string; kind: 'text' | 'note'; x: number; y: number; text: string; color: string };
 export type ImageObject = { id: string; kind: 'image'; x: number; y: number; assetId: string; width: number; height: number };
-export type BoardObject = TextObject | ImageObject;
+export type ShapeObject = { id: string; kind: 'shape'; shape: 'rectangle' | 'ellipse'; x: number; y: number; width: number; height: number; color: string };
+export type ConnectorObject = { id: string; kind: 'connector'; x: number; y: number; dx: number; dy: number; fromId: string | null; toId: string | null; arrow: boolean; color: string };
+export type BoardObject = TextObject | ImageObject | ShapeObject | ConnectorObject;
+export type ConnectorGeometry = Pick<ConnectorObject, 'x' | 'y' | 'dx' | 'dy' | 'fromId' | 'toId'>;
+export function isTextObject(o: BoardObject): o is TextObject { return o.kind === 'text' || o.kind === 'note'; }
+export function isResizable(o: BoardObject): o is ImageObject | ShapeObject { return o.kind === 'image' || o.kind === 'shape'; }
+function validColor(color: unknown) { return typeof color === 'string' && /^#[a-fA-F0-9]{6}$/.test(color); }
+function validConnectorGeometry(o: ConnectorGeometry) {
+  return validPoint(o) && Number.isFinite(o.dx) && Number.isFinite(o.dy) && Math.abs(o.dx) <= LIMITS.coordinate * 2 && Math.abs(o.dy) <= LIMITS.coordinate * 2
+    && validPoint({ x: o.x + o.dx, y: o.y + o.dy }) && Math.hypot(o.dx, o.dy) >= 1
+    && (o.fromId === null || validId(o.fromId)) && (o.toId === null || validId(o.toId)) && (!o.fromId || o.fromId !== o.toId);
+}
 export const IMAGE_LIMITS = { bytes: 1024 * 1024, edge: 1280, assets: 20 };
 export function validAssetId(id: unknown): id is string { return typeof id === 'string' && /^[a-f0-9]{64}$/.test(id); }
 export function validImageSize(value: unknown): value is Size { const s = value as Size; return !!s && Number.isFinite(s.width) && Number.isFinite(s.height) && s.width >= 16 && s.height >= 16 && s.width <= 4000 && s.height <= 4000; }
-export type ObjectPatch = { text: string } | { x: number; y: number } | { width: number; height: number };
+export type ObjectPatch = { text: string } | { x: number; y: number } | { width: number; height: number } | ConnectorGeometry;
 export type ObjectPreview = { memberId: string; object: BoardObject; updatedAt: number };
 export const OBJECT_LIMITS = { count: 500, text: 500, mutations: 10_000 };
 export function validId(id: unknown): id is string { return typeof id === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(id); }
 export function validObject(value: unknown): value is BoardObject {
+  const shape = value as ShapeObject;
+  if (shape?.kind === 'shape') return validId(shape.id) && validPoint(shape) && validImageSize(shape) && (shape.shape === 'rectangle' || shape.shape === 'ellipse') && validColor(shape.color);
+  const connector = value as ConnectorObject;
+  if (connector?.kind === 'connector') return validId(connector.id) && validConnectorGeometry(connector) && typeof connector.arrow === 'boolean' && validColor(connector.color) && connector.fromId !== connector.id && connector.toId !== connector.id;
   const image = value as ImageObject;
   if (image?.kind === 'image') return validId(image.id) && validPoint(image) && validAssetId(image.assetId) && validImageSize(image);
   const o = value as TextObject;
@@ -25,11 +40,13 @@ export function validObjectPatch(value: unknown): value is ObjectPatch {
   const p = value as Record<string, unknown>, keys = Object.keys(p);
   return (keys.length === 1 && typeof p.text === 'string' && p.text.length <= OBJECT_LIMITS.text && !/[\u0000-\u0008\u000b-\u001f]/.test(p.text))
     || (keys.length === 2 && keys.includes('x') && keys.includes('y') && validPoint(p))
+    || (keys.length === 6 && ['x', 'y', 'dx', 'dy', 'fromId', 'toId'].every(k => keys.includes(k)) && validConnectorGeometry(p as ConnectorGeometry))
     || (keys.length === 2 && keys.includes('width') && keys.includes('height') && validImageSize(p));
 }
 // Fixed-width typography keeps wrapping and overview bounds deterministic on every client.
 export function objectLayout(object: BoardObject) {
-  if (object.kind === 'image') return { width: object.width, height: object.height, lines: [] as string[] };
+  if (object.kind === 'connector') return { width: Math.abs(object.dx), height: Math.abs(object.dy), lines: [] as string[] };
+  if (isResizable(object)) return { width: object.width, height: object.height, lines: [] as string[] };
   const lines: string[] = []; let line = '', width = 0;
   for (const char of object.text) {
     if (char === '\n') { lines.push(line); line = ''; width = 0; continue; }
@@ -43,7 +60,7 @@ export function objectLayout(object: BoardObject) {
 export function contentBounds(strokes: Stroke[], objects: BoardObject[]) {
   let bounds = strokeBounds(strokes);
   for (const object of objects) {
-    const size = objectLayout(object), b = { left: object.x, top: object.y, right: object.x + size.width, bottom: object.y + size.height };
+    const b = objectBounds(resolveObject(object, objects));
     bounds = bounds ? { left: Math.min(bounds.left, b.left), top: Math.min(bounds.top, b.top), right: Math.max(bounds.right, b.right), bottom: Math.max(bounds.bottom, b.bottom) } : b;
   }
   return bounds;
@@ -136,4 +153,48 @@ export function canvasBounds(content: ReturnType<typeof contentBounds>) {
     right: Math.max(1280, Math.ceil(content.right / 1280) * 1280),
     bottom: Math.max(720, Math.ceil(content.bottom / 720) * 720),
   };
+}
+
+
+// Resolve endpoints from current target geometry, so previews and persisted moves use one rule.
+export function resolveObject(object: BoardObject, objects: BoardObject[]): BoardObject {
+  if (object.kind !== 'connector') return object;
+  const from = objects.find(o => o.id === object.fromId && o.kind !== 'connector');
+  const to = objects.find(o => o.id === object.toId && o.kind !== 'connector');
+  const center = (o: BoardObject) => { const size = objectLayout(o); return { x: o.x + size.width / 2, y: o.y + size.height / 2 }; };
+  const a = from ? center(from) : { x: object.x, y: object.y };
+  const b = to ? center(to) : { x: object.x + object.dx, y: object.y + object.dy };
+  const edge = (o: BoardObject, towards: Point) => {
+    const c = center(o), size = objectLayout(o), dx = towards.x - c.x, dy = towards.y - c.y;
+    const factor = o.kind === 'shape' && o.shape === 'ellipse'
+      ? 1 / (Math.sqrt((dx / (size.width / 2)) ** 2 + (dy / (size.height / 2)) ** 2) || 1)
+      : 1 / (Math.max(Math.abs(dx) / (size.width / 2), Math.abs(dy) / (size.height / 2)) || 1);
+    return { x: c.x + dx * factor, y: c.y + dy * factor };
+  };
+  const start = from ? edge(from, b) : a, end = to ? edge(to, a) : b;
+  return { ...object, x: start.x, y: start.y, dx: end.x - start.x, dy: end.y - start.y };
+}
+export function objectBounds(o: BoardObject) {
+  if (o.kind === 'connector') return { left: Math.min(o.x, o.x + o.dx) - 12, top: Math.min(o.y, o.y + o.dy) - 12, right: Math.max(o.x, o.x + o.dx) + 12, bottom: Math.max(o.y, o.y + o.dy) + 12 };
+  const size = objectLayout(o), pad = o.kind === 'shape' ? 2 : 0;
+  return { left: o.x - pad, top: o.y - pad, right: o.x + size.width + pad, bottom: o.y + size.height + pad };
+}
+export function hitObject(o: BoardObject, point: Point, tolerance = 8): boolean {
+  if (o.kind === 'connector') {
+    const t = Math.max(0, Math.min(1, ((point.x - o.x) * o.dx + (point.y - o.y) * o.dy) / (o.dx ** 2 + o.dy ** 2 || 1)));
+    return Math.hypot(point.x - o.x - t * o.dx, point.y - o.y - t * o.dy) <= tolerance;
+  }
+  const size = objectLayout(o);
+  if (o.kind === 'shape' && o.shape === 'ellipse') return ((point.x - o.x - size.width / 2) / (size.width / 2 + tolerance)) ** 2 + ((point.y - o.y - size.height / 2) / (size.height / 2 + tolerance)) ** 2 <= 1;
+  return point.x >= o.x - tolerance && point.x <= o.x + size.width + tolerance && point.y >= o.y - tolerance && point.y <= o.y + size.height + tolerance;
+}
+export function patchObject(current: BoardObject, patch: ObjectPatch): BoardObject | null {
+  if ('dx' in patch ? current.kind !== 'connector' : 'text' in patch ? !isTextObject(current) : 'width' in patch ? !isResizable(current) : current.kind === 'connector') return null;
+  const updated = { ...current, ...patch };
+  return validObject(updated) ? updated : null;
+}
+// Referenced objects must belong to this document and cannot themselves be connectors.
+export function normalizeConnector(o: ConnectorObject, objects: BoardObject[]): ConnectorObject {
+  const target = (id: string | null) => objects.some(target => target.id === id && target.kind !== 'connector') ? id : null;
+  return { ...o, fromId: target(o.fromId), toId: target(o.toId) };
 }

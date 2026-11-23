@@ -231,3 +231,36 @@ test('images require room credentials, persist with geometry, reject wrong-kind 
     assert.equal((await read(room.viewerToken!)).status, 403);
   } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('connected shapes merge geometry, detach at deletion, reject type changes and survive restart', async () => {
+  const { resolveObject } = await import('@whiteboard/board-core');
+  const directory = await mkdtemp(join(tmpdir(), 'whiteboard-shapes-'));
+  let app = createWhiteboardServer({ dataDir: directory }), port = await app.listen(0);
+  const clients: Awaited<ReturnType<typeof client>>[] = [];
+  try {
+    const room = await fetch(`http://127.0.0.1:${port}/api/rooms`, { method: 'POST', headers: { 'X-Whiteboard-Client': '1' } }).then(r => r.json()) as Credentials;
+    const a = await client(port, room, 'A'), b = await client(port, room, 'B'), tv = await client(port, room, 'TV', true); clients.push(a, b, tv);
+    const shape = { id: 'shape-0001', kind: 'shape' as const, shape: 'rectangle' as const, x: 0, y: 0, width: 200, height: 100, color: '#315EFB' };
+    const other = { ...shape, id: 'shape-0002', shape: 'ellipse' as const, x: 500 };
+    const link = { id: 'connector-01', kind: 'connector' as const, x: 100, y: 50, dx: 500, dy: 0, fromId: shape.id, toId: other.id, arrow: true, color: '#315EFB' };
+    for (const object of [shape, other, link]) { a.send({ type: 'create-object', object, mutationId: 'create-' + object.id }); await a.wait('saved'); }
+    const snapshot = await tv.wait('snapshot', m => m.objects.length === 3); assert.equal(snapshot.objects.filter(o => o.kind === 'connector').length, 1);
+    a.send({ type: 'object-preview', object: { ...shape, x: 100 }, seq: 1 }); assert.equal((await tv.wait('object-preview', m => !!m.object)).object?.x, 100);
+    a.send({ type: 'update-object', objectId: shape.id, patch: { x: 100, y: 100 }, mutationId: 'move-shape-01' });
+    b.send({ type: 'update-object', objectId: shape.id, patch: { width: 300, height: 120 }, mutationId: 'resize-shape-01' });
+    await Promise.all([a.wait('saved'), b.wait('saved')]);
+    const objects = a.doc.getMap<import('@whiteboard/board-core').BoardObject>('objects');
+    assert.deepEqual(objects.get(shape.id), { ...shape, x: 100, y: 100, width: 300, height: 120 });
+    a.send({ type: 'update-object', objectId: shape.id, patch: { text: 'invalid' }, mutationId: 'shape-type-denied' }); await a.wait('error');
+    const resolved = resolveObject(link, [...objects.values()]); assert.equal(resolved.kind, 'connector');
+    b.send({ type: 'delete-object', objectId: shape.id, mutationId: 'delete-shape-01' }); await b.wait('saved');
+    await a.wait('update', () => !objects.has(shape.id));
+    assert.deepEqual(objects.get(link.id), { ...resolved, fromId: null });
+    a.send({ type: 'update-object', objectId: shape.id, patch: { x: 700, y: 700 }, mutationId: 'late-move-shape' }); await a.wait('saved'); assert.equal(objects.has(shape.id), false);
+    a.send({ type: 'create-object', object: { ...link, id: 'connector-02', fromId: 'other-room-id', toId: null }, mutationId: 'unknown-target-link' }); await a.wait('saved');
+    assert.equal((objects.get('connector-02') as typeof link).fromId, null);
+    for (const c of clients) c.ws.terminate(); await app.close(); app = createWhiteboardServer({ dataDir: directory }); port = await app.listen(0);
+    const restored = await client(port, room, 'Restored'); clients.push(restored);
+    assert.deepEqual(restored.doc.getMap('objects').get(link.id), { ...resolved, fromId: null });
+  } finally { for (const c of clients) { c.ws.terminate(); c.doc.destroy(); } await app.close(); await rm(directory, { recursive: true, force: true }); }
+});

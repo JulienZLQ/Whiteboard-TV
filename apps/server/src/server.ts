@@ -4,7 +4,7 @@ import { resolve, extname, sep } from 'node:path';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as Y from 'yjs';
-import { COLORS, IMAGE_LIMITS, validAssetId, LIMITS, OBJECT_LIMITS, validId, validObject, validObjectPatch, validPoint, validStroke, type BoardObject, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
+import { COLORS, patchObject, resolveObject, normalizeConnector, IMAGE_LIMITS, validAssetId, LIMITS, OBJECT_LIMITS, validId, validObject, validObjectPatch, validPoint, validStroke, type BoardObject, type ClientMessage, type ServerMessage, type Member, type Stroke } from '@whiteboard/board-core';
 import { ImageStore } from './images';
 import { RoomStore, secret, type Room } from './store';
 
@@ -21,7 +21,7 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M3-images"}'); return; }
+    if (url.pathname === '/api/health') { res.setHeader('Content-Type', 'application/json'); res.end('{"ok":true,"stage":"M3-shapes"}'); return; }
     if (url.pathname === '/api/rooms' && req.method === 'POST') {
       // JSON/custom-header requirement blocks ordinary cross-origin forms; no CORS is enabled.
       if (req.headers['x-whiteboard-client'] !== '1' || creating >= 4) { res.writeHead(403).end(); return; }
@@ -208,18 +208,31 @@ export function createWhiteboardServer(options: { dataDir: string; webRoot?: str
               if (applied.size >= OBJECT_LIMITS.mutations) throw new Error('对象操作数量已达预览版本上限');
               const id = operation.type === 'create-object' ? operation.object.id : operation.objectId;
               if (operation.type === 'create-object' && !objects.has(id) && !deleted.has(id)) {
-                if (objects.size >= OBJECT_LIMITS.count) throw new Error('文字与便签数量已达预览版本上限');
+                if (objects.size >= OBJECT_LIMITS.count) throw new Error('白板对象数量已达预览版本上限');
                 const object = operation.object;
                 if (object.kind === 'image') {
                   if (!validAssetId(object.assetId) || !await images.exists(room.id, object.assetId)) throw new Error('图片尚未上传或不存在');
                   const { x, y, assetId, width, height } = object;
                   objects.set(id, { id, kind: 'image', x, y, assetId, width, height });
+                } else if (object.kind === 'shape') {
+                  const { x, y, width, height, shape, color } = object; objects.set(id, { id, kind: 'shape', x, y, width, height, shape, color });
+                } else if (object.kind === 'connector') {
+                  const { x, y, dx, dy, fromId, toId, arrow, color } = object;
+                  objects.set(id, normalizeConnector({ id, kind: 'connector', x, y, dx, dy, fromId, toId, arrow, color }, [...objects.values()]));
                 } else { const { kind, x, y, text, color } = object; objects.set(id, { id, kind, x, y, text, color }); }
               } else if (operation.type === 'update-object' && objects.has(id) && !deleted.has(id)) {
                 const current = objects.get(id)!;
-                if (('text' in operation.patch && current.kind === 'image') || ('width' in operation.patch && current.kind !== 'image')) throw new Error('对象不支持此操作');
-                objects.set(id, { ...current, ...operation.patch });
-              } else if (operation.type === 'delete-object') { deleted.set(id, true); objects.delete(id); }
+                const updated = patchObject(current, operation.patch);
+                if (!updated) throw new Error('对象不支持此操作');
+                objects.set(id, updated.kind === 'connector' ? normalizeConnector(updated, [...objects.values()]) : updated);
+              } else if (operation.type === 'delete-object') {
+                const all = [...objects.values()];
+                for (const o of all) if (o.kind === 'connector' && (o.fromId === id || o.toId === id)) {
+                  const resolved = resolveObject(o, all);
+                  if (resolved.kind === 'connector') objects.set(o.id, { ...resolved, fromId: o.fromId === id ? null : o.fromId, toId: o.toId === id ? null : o.toId });
+                }
+                deleted.set(id, true); objects.delete(id);
+              }
               applied.set(operation.mutationId, true);
               await store.save(room, candidate);
               const update = Y.encodeStateAsUpdate(candidate, Y.encodeStateVector(room.doc));

@@ -345,6 +345,7 @@ test('TV controls keep the QR anchor fixed and distinguish canvas from content w
   await create(page);
   await page.getByRole('button', { name: '添加便签', exact: true }).click(); await page.mouse.click(500, 300);
   await page.getByLabel('内容', { exact: true }).fill('一小块内容'); await page.getByRole('button', { name: '保存内容' }).click();
+  const note = (await exported(page)).objects[0];
   const url = (await page.getByRole('link', { name: '电视视图' }).getAttribute('href'))!;
   const parsed = new URL(url), credentials = { roomId: parsed.searchParams.get('room')!, role: 'viewer', token: new URLSearchParams(parsed.hash.slice(1)).get('token')! };
   for (const legacy of [false, true]) {
@@ -382,10 +383,95 @@ test('TV controls keep the QR anchor fixed and distinguish canvas from content w
     await expect(canvas).toHaveAttribute('data-camera-moving', 'true');
     await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
     expect(JSON.parse((await canvas.getAttribute('data-camera'))!).zoom).toBeGreaterThan(wide.zoom);
+    const fitted = JSON.parse((await canvas.getAttribute('data-camera'))!);
+    expect((note.y + 200) * fitted.zoom + fitted.y).toBeLessThan(anchor!.y);
     const style = await content.evaluate(el => ({ outline: getComputedStyle(el).outlineStyle, transition: getComputedStyle(el).transitionDuration, background: getComputedStyle(el).backgroundColor }));
     expect(style.outline).toBe('none'); expect(style.transition).not.toBe('0s'); expect(style.background).not.toBe('rgb(255, 255, 255)');
     await full.click(); await expect(canvas).toHaveAttribute('data-view-mode', 'canvas'); await expect(canvas).toHaveAttribute('data-camera-moving', 'false');
     expect(JSON.parse((await canvas.getAttribute('data-camera'))!).zoom).toBeCloseTo(wide.zoom, 3);
     await context.close(); expect(errors).toEqual([]);
   }
+});
+
+test('shapes and attached arrows preview on both TVs, follow moves, detach and recover', async ({ browser, page }) => {
+  test.setTimeout(90000);
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await create(page);
+  const url = (await page.getByRole('link', { name: '电视视图' }).getAttribute('href'))!;
+  const parsed = new URL(url), credentials = { roomId: parsed.searchParams.get('room')!, role: 'viewer', token: new URLSearchParams(parsed.hash.slice(1)).get('token')! };
+  const tvContext = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const tv = await tvContext.newPage(); tv.on('pageerror', e => errors.push(e.message)); await tv.goto(url); await tv.getByRole('button', { name: '打开电视总览' }).click();
+  const oldContext = await browser.newContext({ viewport: { width: 960, height: 540 } });
+  await oldContext.addInitScript(c => localStorage.setItem('whiteboard.tv.last', JSON.stringify(c)), credentials);
+  const old = await oldContext.newPage(); old.on('pageerror', e => errors.push(e.message)); await old.goto('/legacy-tv.html?room=' + credentials.roomId);
+  const canvases = [tv.getByTestId('canvas'), old.locator('#board')];
+  const shapeTool = async (name: string) => { await page.getByRole('button', { name: '形状与连线', exact: true }).click(); await page.getByRole('button', { name, exact: true }).click(); };
+  await shapeTool('矩形');
+  await page.mouse.move(380, 270); await page.mouse.down(); await page.mouse.move(580, 410, { steps: 12 });
+  for (const canvas of canvases) { await expect(canvas).toHaveAttribute('data-object-preview-count', '1'); await expect(canvas).toHaveAttribute('data-object-count', '0'); }
+  await page.mouse.up(); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  await shapeTool('椭圆'); await page.mouse.move(820, 270); await page.mouse.down(); await page.mouse.move(1020, 410, { steps: 12 }); await page.mouse.up();
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-object-count', '2');
+  await shapeTool('箭头'); await page.mouse.move(480, 340); await page.mouse.down(); await page.mouse.move(920, 340, { steps: 12 }); await page.mouse.up();
+  for (const canvas of canvases) await expect(canvas).toHaveAttribute('data-object-count', '3');
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  let data = await exported(page); expect(data.schemaVersion).toBe(4);
+  const rectangle = data.objects.find((o: any) => o.kind === 'shape' && o.shape === 'rectangle');
+  const ellipse = data.objects.find((o: any) => o.kind === 'shape' && o.shape === 'ellipse');
+  const link = data.objects.find((o: any) => o.kind === 'connector');
+  expect(link.fromId).toBe(rectangle.id); expect(link.toId).toBe(ellipse.id);
+  const before = JSON.parse((await tv.getByTestId('canvas').getAttribute('data-connectors'))!)[0];
+  await page.mouse.move(450, 320); await page.mouse.down(); await page.mouse.move(490, 440, { steps: 12 });
+  for (const canvas of canvases) {
+    await expect(canvas).toHaveAttribute('data-object-preview-count', '1');
+    await expect.poll(async () => JSON.parse((await canvas.getAttribute('data-connectors'))!)[0].y).toBeGreaterThan(before.y + 20);
+  }
+  await page.mouse.up(); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  data = await exported(page); const moved = data.objects.find((o: any) => o.id === rectangle.id);
+  const c = JSON.parse((await page.getByTestId('canvas').getAttribute('data-camera'))!);
+  const corner = { x: (moved.x + moved.width) * c.zoom + c.x, y: (moved.y + moved.height) * c.zoom + c.y };
+  await page.mouse.move(corner.x, corner.y); await page.mouse.down(); await page.mouse.move(corner.x + 50, corner.y + 25, { steps: 8 }); await page.mouse.up();
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  data = await exported(page); expect(data.objects.find((o: any) => o.id === rectangle.id).width).toBeGreaterThan(moved.width);
+  const attached = JSON.parse((await page.getByTestId('canvas').getAttribute('data-connectors'))!)[0];
+  await page.getByRole('button', { name: '删除对象', exact: true }).click(); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  data = await exported(page); const detached = data.objects.find((o: any) => o.id === link.id); expect(detached.fromId).toBeNull(); expect(detached.x).toBeCloseTo(attached.x); expect(detached.y).toBeCloseTo(attached.y);
+  // Drag the free endpoint to a new point; no bounding-box false hit inside a diagonal line.
+  const end = { x: detached.x * c.zoom + c.x, y: detached.y * c.zoom + c.y };
+  await page.mouse.click(end.x, end.y); await page.mouse.move(end.x, end.y); await page.mouse.down(); await page.mouse.move(end.x - 100, end.y + 80, { steps: 8 }); await page.mouse.up();
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  data = await exported(page); expect(data.objects.find((o: any) => o.id === link.id).x).toBeLessThan(detached.x);
+  await page.reload(); await page.getByRole('button', { name: '加入白板', exact: true }).click();
+  await expect(page.getByTestId('canvas')).toHaveAttribute('data-object-count', '2');
+  for (const canvas of canvases) await expect(canvas).toHaveAttribute('data-object-count', '2');
+  expect(errors).toEqual([]); await tvContext.close(); await oldContext.close();
+});
+
+test('phone palette draws a reverse shape, cancels multi-touch creation and saves an offline connector', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await create(page);
+  const choose = async (name: string) => { await page.getByRole('button', { name: '形状与连线', exact: true }).click(); await page.getByRole('button', { name, exact: true }).click(); };
+  await choose('矩形');
+  await page.mouse.move(300, 420); await page.mouse.down(); await page.mouse.move(100, 260, { steps: 10 }); await page.mouse.up();
+  await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  let data = await exported(page); expect(data.objects[0].width).toBeGreaterThan(16); expect(data.objects[0].height).toBeGreaterThan(16);
+  const canvas = page.getByTestId('canvas');
+  await choose('椭圆');
+  const touch = await context.newCDPSession(page);
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 100, y: 300, id: 1 }] });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 150, y: 340, id: 1 }] });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 150, y: 340, id: 1 }, { x: 220, y: 400, id: 2 }] });
+  await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await touch.detach();
+  await expect(canvas).toHaveAttribute('data-object-count', '1');
+  await context.setOffline(true); await expect(page.getByText('连接中断', { exact: true })).toBeAttached();
+  await choose('连线'); await page.mouse.move(80, 500); await page.mouse.down(); await page.mouse.move(310, 570, { steps: 10 }); await page.mouse.up();
+  await expect(canvas).toHaveAttribute('data-object-count', '2');
+  await context.setOffline(false); await expect(page.getByText('已保存', { exact: true })).toBeVisible();
+  data = await exported(page); expect(data.objects.find((o: any) => o.kind === 'connector').arrow).toBe(false);
+  await page.getByRole('button', { name: '形状与连线', exact: true }).click();
+  const panel = await page.locator('.shape-tools').boundingBox(), toolbar = await page.locator('.toolbar').boundingBox();
+  expect(panel!.y + panel!.height).toBeLessThan(toolbar!.y);
+  const views = await page.locator('.zoom-controls').boundingBox(); expect(panel!.y + panel!.height).toBeLessThan(views!.y);
+  await expect(page.locator('.object-actions')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
