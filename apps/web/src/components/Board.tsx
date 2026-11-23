@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Check, Monitor, UserPlus, Minus, Plus, Scan, Download, RefreshCw, WifiOff } from 'lucide-react';
+import { androidTV } from '../tv';
 import { COLORS, type Camera } from '@whiteboard/board-core';
 import { BoardEngine, type Tool } from '../canvas/engine';
 import { BoardSession, roomLink } from '../session';
@@ -53,7 +54,7 @@ export function Board({ session }: { session: BoardSession }) {
     {viewer && state.access && state.connection === 'online' ? <TVJoinCard access={state.access} credentials={session.credentials}/> : null}
     {empty ? <div className="empty-state"><PencilMark/><h2>{viewer ? '等待第一个想法' : '从一笔开始'}</h2><p>{viewer ? '编辑端的每一笔，都会出现在这里' : '自由书写，或邀请伙伴一起创作'}</p><span>{viewer ? '画面自动适配全部内容' : '双指移动与缩放 · 每个人都有独立视角'}</span></div> : null}
     {!viewer ? <Toolbar tool={tool} color={color} onTool={setTool} onColor={setColor}/> : null}
-    <footer className="save-status panel" aria-live="polite">{state.connection !== 'online' ? <WifiOff size={18}/> : <Check size={18}/>}<span>{state.pending ? `${state.pending} 项待保存` : state.connection === 'online' ? '已保存' : '等待连接'}</span><button className="icon-button export" aria-label="导出本地副本" title="导出本地副本" onClick={exportCopy}><Download size={17}/></button></footer>
+    <footer className="save-status panel" aria-live="polite">{state.connection !== 'online' ? <WifiOff size={18}/> : <Check size={18}/>}<span>{state.pending ? `${state.pending} 项待保存` : state.connection === 'online' ? '已保存' : '等待连接'}</span>{!androidTV() ? <button className="icon-button export" aria-label="导出本地副本" title="导出本地副本" onClick={exportCopy}><Download size={17}/></button> : null}</footer>
     <div className="zoom-controls panel" aria-label="画布视角">
       {!viewer ? <button className="icon-button" aria-label="缩小" onClick={() => engine.current?.zoom(0.8)}><Minus size={20}/></button> : null}
       {viewer ? <select aria-label="电视关注成员" value={focus} onChange={event => { setFocus(event.target.value); engine.current?.focus(event.target.value); }}><option value="">完整画布</option>{state.members.filter(m => m.role === 'editor').map(m => <option key={m.id} value={m.id}>关注 {m.name}</option>)}</select> : null}

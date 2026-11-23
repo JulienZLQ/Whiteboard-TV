@@ -6,3 +6,12 @@ dist/
 test-results/
 playwright-report/
 *.log
+
+# Android build and local SDK/signing state
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore

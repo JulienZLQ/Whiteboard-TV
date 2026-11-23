@@ -129,3 +129,43 @@ test('TV creates a room, phone joins and claims hosting, removed credentials sta
   expect(errors).toEqual([]);
   await phoneContext.close();
 });
+
+test('TV remote navigation closes nested dialogs and restores room after app storage restart', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const page = await context.newPage(); const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/?mode=tv&tvShell=android');
+  await expect(page.getByRole('checkbox')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '创建电视白板' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByAltText('电视编辑加入二维码')).toBeVisible();
+  await expect(page).toHaveURL(/tvShell=android/);
+  await expect(page.getByRole('button', { name: '导出本地副本' })).toHaveCount(0);
+  // Exercise exactly the JavaScript entry point invoked by Android D-pad events.
+  await page.getByRole('button', { name: '管理', exact: true }).focus();
+  await page.evaluate(() => window.WhiteboardTV!.key('ArrowRight'));
+  await expect(page.getByRole('button', { name: '邀请加入', exact: true })).toBeFocused();
+  await page.evaluate(() => window.WhiteboardTV!.key('Enter'));
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.evaluate(() => window.WhiteboardTV!.back());
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: '管理', exact: true }).focus(); await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: '会话管理' })).toBeVisible();
+  // Directional navigation remains within the active dialog.
+  await page.keyboard.press('ArrowDown');
+  expect(await page.evaluate(() => !!document.activeElement?.closest('dialog[open]'))).toBe(true);
+  await page.getByRole('button', { name: '手机认领主持权限' }).focus(); await page.keyboard.press('Enter');
+  await expect(page.locator('dialog[open]')).toHaveCount(2);
+  await page.evaluate(() => window.WhiteboardTV!.back());
+  await expect(page.locator('dialog[open]')).toHaveCount(1);
+  await expect(page.getByRole('heading', { name: '会话管理' })).toBeVisible();
+  await page.evaluate(() => window.WhiteboardTV!.back());
+  expect(await page.evaluate(() => window.WhiteboardTV!.back())).toBe(false);
+  const url = page.url();
+  await page.evaluate(() => sessionStorage.clear()); await page.close();
+  const restored = await context.newPage(); await restored.goto(url);
+  await expect(restored.getByAltText('电视编辑加入二维码')).toBeVisible();
+  await expect(restored.getByRole('button', { name: '管理', exact: true })).toBeVisible();
+  expect(await restored.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+  await context.close();
+});

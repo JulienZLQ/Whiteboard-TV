@@ -9,7 +9,7 @@ export function RoomControls({ session, state, onClose }: { session: BoardSessio
   useEffect(() => { const el = dialog.current!; el.showModal(); return () => el.close(); }, []);
   const access = state.access;
   const disabled = state.connection !== 'online' || access?.ended;
-  return <dialog ref={dialog} className="invite-dialog room-controls" onCancel={onClose}>
+  return <dialog ref={dialog} className="invite-dialog room-controls" onCancel={event => { event.stopPropagation(); onClose(); }}>
     <button className="icon-button close-dialog" aria-label="关闭管理" onClick={onClose}><X size={22}/></button>
     <h2>会话管理</h2><p>控制加入方式，管理当前共创成员</p>
     <div className="management-actions">

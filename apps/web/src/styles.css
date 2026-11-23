@@ -32,3 +32,17 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .welcome-form .tv-choice { flex-direction: row; margin-top: 18px; }
 .welcome-form .tv-choice input { width: 18px; height: 18px; }
 @media(max-width:600px) { .board:has(.manage-button) .brand>div:last-child { display: none; } }
+
+.tv-navigation button:focus, .tv-navigation a:focus, .tv-navigation input:focus, .tv-navigation select:focus { outline: 4px solid #315efb; outline-offset: 4px; box-shadow: 0 0 0 7px #ffffff; }
+.tv-navigation dialog { scroll-padding: 18px; }
+@media(min-width:900px) {
+  .tv-navigation .welcome-form { width: 560px; }
+  .tv-navigation .welcome-form h1 { font-size: 42px; }
+  .tv-navigation .welcome-form>p, .tv-navigation .welcome-form label { font-size: 20px; }
+  .tv-navigation .welcome-form>.primary { height: 64px; font-size: 22px; }
+  .tv-navigation .welcome-hint { font-size: 17px; }
+  .tv-navigation .invite-dialog { width: 540px; padding: 40px; }
+  .tv-navigation .invite-dialog h2 { font-size: 30px; }
+  .tv-navigation .invite-dialog p, .tv-navigation .member-list { font-size: 19px; }
+  .tv-navigation .invite-dialog .primary, .tv-navigation .invite-dialog .secondary, .tv-navigation .invite-dialog .danger { font-size: 19px; min-height: 52px; }
+}

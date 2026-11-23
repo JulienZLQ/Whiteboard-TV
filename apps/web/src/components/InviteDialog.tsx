@@ -15,7 +15,7 @@ export function InviteDialog({ url, viewer, hostClaim = false, onClose }: { url:
     catch { input.current?.select(); setError('请长按或使用复制快捷键复制链接'); }
   }
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname);
-  return <dialog className="invite-dialog" ref={dialog} onCancel={onClose} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
+  return <dialog className="invite-dialog" ref={dialog} onCancel={event => { event.stopPropagation(); onClose(); }} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
     <button className="icon-button close-dialog" aria-label="关闭邀请" onClick={onClose}><X size={22}/></button>
     <h2>{hostClaim ? '认领主持权限' : viewer ? '邀请大家观看' : '一起写下好想法'}</h2>
     <p>{hostClaim ? '仅供主持人扫码，成功认领一次后失效' : viewer ? '扫码查看这块白板' : '手机或 Pad 扫码，即可独立编辑'}</p>

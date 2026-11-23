@@ -1,3 +1,4 @@
+import { saveCredentials } from './tv';
 import * as Y from 'yjs';
 import { LIMITS, type AccessState, type ClientMessage, type Credentials, type Member, type Preview, type ServerMessage, type Stroke } from '@whiteboard/board-core';
 
@@ -71,7 +72,7 @@ export class BoardSession {
         this.credentials.viewerToken = message.viewerToken;
         this.credentials.role = message.role;
         if (message.token) this.credentials.token = message.token;
-        try { sessionStorage.setItem(`whiteboard.credentials.${this.credentials.roomId}.${message.role}`, JSON.stringify(this.credentials)); } catch { /* live session remains available */ }
+        saveCredentials(this.credentials);
         Y.applyUpdate(this.doc, decode(message.update));
         this.members.clear(); for (const member of message.members) this.members.set(member.id, member);
         this.publish({ connection: 'online', host: !!message.host, access: message.access, memberId: message.memberId, members: message.members, error: '' });
